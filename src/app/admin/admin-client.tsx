@@ -5,18 +5,85 @@ import { useMemo, useState, type FormEvent } from "react";
 import { Icon } from "@/components/icon";
 import "./admin.css";
 
-type View = "Overview" | "Catalog" | "Rules" | "Staff access" | "Reports" | "Audit log";
-type Product = { id: string; name: string; description: string; price: number; interval: string; status: "Active" | "Archived"; variants: number };
-type Discount = { id: string; name: string; type: "Percentage" | "Fixed"; value: number; limit: number; active: boolean };
-type Tax = { id: string; name: string; rate: number; scope: string; active: boolean };
-type StaffMember = { id: string; name: string; email: string; role: "Administrator" | "Operations Specialist" | "Billing Manager"; status: "Active" | "Invited" };
-type AuditEntry = { id: string; action: string; actor: string; area: string; time: string };
+type View =
+  | "Overview"
+  | "Customer records"
+  | "Catalog"
+  | "Rules"
+  | "Staff access"
+  | "Reports"
+  | "Audit log";
+
+type Product = {
+  id: string;
+  name: string;
+  description: string;
+  price: number;
+  interval: string;
+  status: "Active" | "Archived";
+  variants: number;
+};
+
+type Customer = {
+  id: string;
+  name: string;
+  company: string;
+  email: string;
+  phone: string;
+  city: string;
+  taxId: string;
+  activeContracts: number;
+  totalSpend: number;
+  status: "Active" | "Past Due" | "Onboarding";
+};
+
+type Discount = {
+  id: string;
+  name: string;
+  type: "Percentage" | "Fixed";
+  value: number;
+  limit: number;
+  active: boolean;
+};
+
+type Tax = {
+  id: string;
+  name: string;
+  rate: number;
+  scope: string;
+  active: boolean;
+};
+
+type StaffMember = {
+  id: string;
+  name: string;
+  email: string;
+  role: "Administrator" | "Operations Specialist" | "Billing Manager";
+  status: "Active" | "Invited";
+};
+
+type AuditEntry = {
+  id: string;
+  action: string;
+  actor: string;
+  area: string;
+  time: string;
+};
 
 const initialProducts: Product[] = [
   { id: "PROD-01", name: "Studio Workspace", description: "Workspace management for creative teams", price: 3500, interval: "Monthly", status: "Active", variants: 2 },
   { id: "PROD-02", name: "Flow Analytics", description: "Product and engagement analytics", price: 1180, interval: "Monthly", status: "Active", variants: 1 },
   { id: "PROD-03", name: "Cloud Storage Team", description: "Managed storage for growing teams", price: 2000, interval: "Monthly", status: "Active", variants: 1 },
   { id: "PROD-04", name: "Enterprise Suite", description: "Custom enterprise subscription package", price: 160000, interval: "Yearly", status: "Archived", variants: 3 },
+];
+
+const initialCustomers: Customer[] = [
+  { id: "CUST-001", name: "Priya Sharma", company: "TechFlow Labs Pvt Ltd", email: "finance@techflow.io", phone: "+91 98450 11223", city: "Bangalore", taxId: "29AABCT1332L1Z1", activeContracts: 1, totalSpend: 142500, status: "Active" },
+  { id: "CUST-002", name: "Rajesh Kumar", company: "Acme Design Studio", email: "billing@acmedesign.in", phone: "+91 98201 44556", city: "Mumbai", taxId: "27AABCA4321K1ZM", activeContracts: 1, totalSpend: 88200, status: "Active" },
+  { id: "CUST-003", name: "Ananya Patel", company: "Brightleaf Retail Ltd", email: "accounts@brightleaf.store", phone: "+91 97234 66778", city: "Ahmedabad", taxId: "24AABCB9876J1ZQ", activeContracts: 1, totalSpend: 52400, status: "Past Due" },
+  { id: "CUST-004", name: "Vikram Malhotra", company: "Nova Horizon Media", email: "vikram@novahorizon.com", phone: "+91 98111 88990", city: "Delhi NCR", taxId: "07AABCN5544H1ZS", activeContracts: 1, totalSpend: 36900, status: "Active" },
+  { id: "CUST-005", name: "Neha Iyer", company: "Zenith Robotics Systems", email: "neha.iyer@zenithrobotics.in", phone: "+91 94400 33445", city: "Hyderabad", taxId: "36AABCZ1234F1ZX", activeContracts: 0, totalSpend: 24000, status: "Onboarding" },
+  { id: "CUST-006", name: "Suresh Pillai", company: "BluePeak Logistics LLP", email: "accounts@bluepeak.in", phone: "+91 94471 22334", city: "Kochi", taxId: "32AABCB7890D1ZR", activeContracts: 1, totalSpend: 18500, status: "Active" },
 ];
 
 const initialDiscounts: Discount[] = [
@@ -37,6 +104,7 @@ const initialStaff: StaffMember[] = [
 ];
 
 const initialAudit: AuditEntry[] = [
+  { id: "AUD-105", action: "Inspected TechFlow Labs account record", actor: "Priya Nair", area: "Customer records", time: "Today, 11:30 AM" },
   { id: "AUD-104", action: "Updated GST rule to 18%", actor: "Priya Nair", area: "Tax rules", time: "Today, 10:12 AM" },
   { id: "AUD-103", action: "Confirmed invoice INV-2026-1055", actor: "Siddharth Rao", area: "Invoicing", time: "Today, 09:44 AM" },
   { id: "AUD-102", action: "Created Enterprise Suite quotation", actor: "Siddharth Rao", area: "Subscriptions", time: "Yesterday, 04:18 PM" },
@@ -46,17 +114,38 @@ const initialAudit: AuditEntry[] = [
 export function AdminClient() {
   const [view, setView] = useState<View>("Overview");
   const [products, setProducts] = useState(initialProducts);
+  const [customers, setCustomers] = useState(initialCustomers);
   const [discounts, setDiscounts] = useState(initialDiscounts);
   const [taxes, setTaxes] = useState(initialTaxes);
   const [staff, setStaff] = useState(initialStaff);
   const [audit, setAudit] = useState(initialAudit);
   const [notice, setNotice] = useState("");
+
+  // Dialog & Filter States
   const [productDialog, setProductDialog] = useState(false);
   const [staffDialog, setStaffDialog] = useState(false);
+  const [customerDialog, setCustomerDialog] = useState(false);
+  const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
+  const [customerSearch, setCustomerSearch] = useState("");
+  const [customerFilter, setCustomerFilter] = useState("All");
   const [auditFilter, setAuditFilter] = useState("All");
 
   const activeProducts = products.filter((product) => product.status === "Active").length;
   const filteredAudit = auditFilter === "All" ? audit : audit.filter((entry) => entry.area === auditFilter);
+
+  const filteredCustomers = useMemo(() => {
+    return customers.filter((cust) => {
+      const matchesFilter = customerFilter === "All" || cust.status === customerFilter;
+      const query = customerSearch.trim().toLowerCase();
+      const matchesSearch =
+        !query ||
+        cust.company.toLowerCase().includes(query) ||
+        cust.name.toLowerCase().includes(query) ||
+        cust.city.toLowerCase().includes(query) ||
+        cust.taxId.toLowerCase().includes(query);
+      return matchesFilter && matchesSearch;
+    });
+  }, [customers, customerFilter, customerSearch]);
 
   function showNotice(message: string) {
     setNotice(message);
@@ -64,11 +153,18 @@ export function AdminClient() {
   }
 
   function addAudit(action: string, area: string) {
-    setAudit((current) => [{ id: `AUD-${105 + current.length}`, action, actor: "Priya Nair", area, time: "Just now" }, ...current]);
+    setAudit((current) => [
+      { id: `AUD-${106 + current.length}`, action, actor: "Priya Nair", area, time: "Just now" },
+      ...current,
+    ]);
   }
 
   function toggleProduct(id: string) {
-    setProducts((current) => current.map((product) => product.id === id ? { ...product, status: product.status === "Active" ? "Archived" : "Active" } : product));
+    setProducts((current) =>
+      current.map((product) =>
+        product.id === id ? { ...product, status: product.status === "Active" ? "Archived" : "Active" } : product
+      )
+    );
     const product = products.find((item) => item.id === id);
     if (product) {
       const next = product.status === "Active" ? "archived" : "activated";
@@ -78,7 +174,9 @@ export function AdminClient() {
   }
 
   function toggleDiscount(id: string) {
-    setDiscounts((current) => current.map((discount) => discount.id === id ? { ...discount, active: !discount.active } : discount));
+    setDiscounts((current) =>
+      current.map((discount) => (discount.id === id ? { ...discount, active: !discount.active } : discount))
+    );
     const discount = discounts.find((item) => item.id === id);
     if (discount) {
       addAudit(`${discount.active ? "Disabled" : "Enabled"} ${discount.name} discount`, "Discounts");
@@ -87,7 +185,9 @@ export function AdminClient() {
   }
 
   function toggleTax(id: string) {
-    setTaxes((current) => current.map((tax) => tax.id === id ? { ...tax, active: !tax.active } : tax));
+    setTaxes((current) =>
+      current.map((tax) => (tax.id === id ? { ...tax, active: !tax.active } : tax))
+    );
     const tax = taxes.find((item) => item.id === id);
     if (tax) {
       addAudit(`${tax.active ? "Disabled" : "Enabled"} ${tax.name}`, "Tax rules");
@@ -101,7 +201,15 @@ export function AdminClient() {
     const name = String(data.get("name") ?? "").trim();
     const price = Number(data.get("price"));
     if (!name || !Number.isFinite(price) || price < 0) return showNotice("Enter a product name and valid price.");
-    const product: Product = { id: `PROD-${String(products.length + 1).padStart(2, "0")}`, name, description: String(data.get("description") ?? ""), price, interval: String(data.get("interval") ?? "Monthly"), status: "Active", variants: 1 };
+    const product: Product = {
+      id: `PROD-${String(products.length + 1).padStart(2, "0")}`,
+      name,
+      description: String(data.get("description") ?? ""),
+      price,
+      interval: String(data.get("interval") ?? "Monthly"),
+      status: "Active",
+      variants: 1,
+    };
     setProducts((current) => [...current, product]);
     addAudit(`Created product ${name}`, "Catalog");
     setProductDialog(false);
@@ -114,61 +222,856 @@ export function AdminClient() {
     const name = String(data.get("name") ?? "").trim();
     const email = String(data.get("email") ?? "").trim();
     if (!name || !email) return showNotice("Enter a name and work email.");
-    const member: StaffMember = { id: `USR-${String(staff.length + 1).padStart(2, "0")}`, name, email, role: data.get("role") as StaffMember["role"], status: "Invited" };
+    const member: StaffMember = {
+      id: `USR-${String(staff.length + 1).padStart(2, "0")}`,
+      name,
+      email,
+      role: data.get("role") as StaffMember["role"],
+      status: "Invited",
+    };
     setStaff((current) => [...current, member]);
     addAudit(`Invited ${name} to the staff workspace`, "Staff access");
     setStaffDialog(false);
     showNotice(`Invitation prepared for ${email}.`);
   }
 
-  const monthlyRevenue = useMemo(() => products.filter((product) => product.status === "Active" && product.interval === "Monthly").reduce((total, product) => total + product.price, 0), [products]);
+  function submitCustomer(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const data = new FormData(event.currentTarget);
+    const company = String(data.get("company") ?? "").trim();
+    const name = String(data.get("name") ?? "").trim();
+    const email = String(data.get("email") ?? "").trim();
+    const phone = String(data.get("phone") ?? "").trim();
+    const city = String(data.get("city") ?? "").trim();
+    const taxId = String(data.get("taxId") ?? "").trim();
+    if (!company || !name || !email) return showNotice("Enter company, contact person, and email.");
+
+    const newCust: Customer = {
+      id: `CUST-${String(customers.length + 1).padStart(3, "0")}`,
+      company,
+      name,
+      email,
+      phone: phone || "+91 98000 00000",
+      city: city || "Bangalore",
+      taxId: taxId || "29AABC00000A1Z0",
+      activeContracts: 0,
+      totalSpend: 0,
+      status: "Onboarding",
+    };
+    setCustomers((curr) => [...curr, newCust]);
+    addAudit(`Registered customer record for ${company}`, "Customer records");
+    setCustomerDialog(false);
+    showNotice(`Customer record created for ${company}.`);
+  }
+
+  const monthlyRevenue = useMemo(
+    () =>
+      products
+        .filter((product) => product.status === "Active" && product.interval === "Monthly")
+        .reduce((total, product) => total + product.price, 0),
+    [products]
+  );
 
   return (
     <main className="admin-shell">
+      {/* Sidebar */}
       <aside className="admin-sidebar">
-        <Link href="/" className="admin-brand"><span><i /><i /></span>payloop</Link>
+        <Link href="/" className="admin-brand">
+          <span><i /><i /></span>payloop
+        </Link>
         <div className="admin-badge">ADMIN CONSOLE</div>
         <p className="admin-nav-label">SYSTEM CONTROL</p>
-        <nav>{(["Overview", "Catalog", "Rules", "Staff access", "Reports", "Audit log"] as View[]).map((item) => (
-          <button key={item} type="button" className={view === item ? "admin-nav-active" : ""} onClick={() => setView(item)}>
-            <Icon name={item === "Catalog" ? "layers" : item === "Audit log" ? "receipt" : item === "Reports" ? "grid" : "sparkle"} size={16} />{item}
-          </button>
-        ))}</nav>
-        <div className="admin-side-note"><span /> Global controls apply to all staff and customer workspaces.</div>
-        <div className="admin-account"><b>PN</b><span><strong>Priya Nair</strong><small>System administrator</small></span></div>
+        <nav>
+          {(
+            [
+              "Overview",
+              "Customer records",
+              "Catalog",
+              "Rules",
+              "Staff access",
+              "Reports",
+              "Audit log",
+            ] as View[]
+          ).map((item) => (
+            <button
+              key={item}
+              type="button"
+              className={view === item ? "admin-nav-active" : ""}
+              onClick={() => setView(item)}
+            >
+              <Icon
+                name={
+                  item === "Customer records"
+                    ? "users"
+                    : item === "Catalog"
+                    ? "layers"
+                    : item === "Audit log"
+                    ? "receipt"
+                    : item === "Reports"
+                    ? "grid"
+                    : item === "Rules"
+                    ? "sliders"
+                    : "sparkle"
+                }
+                size={16}
+              />
+              <span>{item}</span>
+              {item === "Customer records" && (
+                <span className="admin-nav-count">{customers.length}</span>
+              )}
+            </button>
+          ))}
+        </nav>
+        <div className="admin-side-note">
+          <span /> Global controls apply to all staff and customer workspaces.
+        </div>
+        <div className="admin-account">
+          <b>PN</b>
+          <span>
+            <strong>Priya Nair</strong>
+            <small>System administrator</small>
+          </span>
+        </div>
       </aside>
 
+      {/* Main Content Area */}
       <section className="admin-content">
-        <header className="admin-header"><span>Admin console <Icon name="chevronRight" size={13} /> <strong>{view}</strong></span><div><Link href="/staff" className="admin-text-link">Open staff workspace <Icon name="arrowUpRight" size={13} /></Link><button type="button" className="admin-avatar" onClick={() => showNotice("Administrator profile is managed by the identity service.")}>PN</button></div></header>
+        <header className="admin-header">
+          <span>
+            Admin console <Icon name="chevronRight" size={13} /> <strong>{view}</strong>
+          </span>
+          <div>
+            <Link href="/staff" className="admin-text-link">
+              Open staff workspace <Icon name="arrowUpRight" size={13} />
+            </Link>
+            <button
+              type="button"
+              className="admin-avatar"
+              onClick={() => showNotice("Administrator profile is managed by the identity service.")}
+            >
+              PN
+            </button>
+          </div>
+        </header>
+
         <div className="admin-page">
-          {view === "Overview" && <>
-            <div className="admin-title"><div><p>SYSTEM ADMINISTRATION</p><h1>Keep every loop <em>in sync.</em></h1><span>Configure the rules, people, and catalog behind Payloop.</span></div><button className="admin-button" type="button" onClick={() => setProductDialog(true)}><Icon name="plus" size={15} /> New product</button></div>
-            <div className="admin-kpis"><Metric label="ACTIVE CATALOG PRODUCTS" value={String(activeProducts)} caption={`${products.length - activeProducts} archived`} /><Metric label="CONFIGURED MONTHLY PRICING" value={`₹${monthlyRevenue.toLocaleString("en-IN")}`} caption="Base catalog value" /><Metric label="ACTIVE STAFF ACCESS" value={String(staff.filter((member) => member.status === "Active").length)} caption={`${staff.filter((member) => member.status === "Invited").length} pending invitation`} /><Metric label="AUDIT EVENTS TODAY" value="24" caption="All actions traceable" /></div>
-            <div className="admin-grid"><section className="admin-panel"><PanelTitle eyebrow="ATTENTION" title="Configuration checks" /><ul className="admin-checks"><li><span className="check-good">✓</span><div><strong>Tax rules are current</strong><small>India GST and B2B reverse-charge rules are enabled.</small></div></li><li><span className="check-warn">!</span><div><strong>One archived catalog item</strong><small>Enterprise Suite is hidden from new quotes.</small></div></li><li><span className="check-good">✓</span><div><strong>Staff access reviewed</strong><small>Three active internal accounts with no pending escalations.</small></div></li></ul></section><section className="admin-panel"><PanelTitle eyebrow="LATEST ACTIVITY" title="Audit trail" action={() => setView("Audit log")} /><ActivityList entries={audit.slice(0, 4)} /></section></div>
-          </>}
+          {/* View: Overview */}
+          {view === "Overview" && (
+            <>
+              <div className="admin-title">
+                <div>
+                  <p>SYSTEM ADMINISTRATION</p>
+                  <h1>Keep every loop <em>in sync.</em></h1>
+                  <span>Configure the rules, consumers, staff, and catalog behind Payloop.</span>
+                </div>
+                <button className="admin-button" type="button" onClick={() => setProductDialog(true)}>
+                  <Icon name="plus" size={15} /> New product
+                </button>
+              </div>
 
-          {view === "Catalog" && <section className="admin-panel"><PanelTitle eyebrow="PRODUCT CATALOG" title="Plans, variants & pricing" button="Add product" onButton={() => setProductDialog(true)} /><div className="admin-table-wrap"><table><thead><tr><th>PRODUCT</th><th>BASE PRICE</th><th>INTERVAL</th><th>VARIANTS</th><th>STATUS</th><th /></tr></thead><tbody>{products.map((product) => <tr key={product.id}><td><strong>{product.name}</strong><small>{product.description}</small></td><td>₹{product.price.toLocaleString("en-IN")}</td><td>{product.interval}</td><td>{product.variants}</td><td><span className={product.status === "Active" ? "admin-status green" : "admin-status gray"}>{product.status}</span></td><td><button className="admin-row-button" type="button" onClick={() => toggleProduct(product.id)}>{product.status === "Active" ? "Archive" : "Activate"}</button></td></tr>)}</tbody></table></div></section>}
+              <div className="admin-kpis">
+                <Metric
+                  label="REGISTERED CUSTOMERS"
+                  value={String(customers.length)}
+                  caption={`${customers.filter((c) => c.status === "Active").length} active accounts`}
+                />
+                <Metric
+                  label="CONFIGURED MONTHLY PRICING"
+                  value={`₹${monthlyRevenue.toLocaleString("en-IN")}`}
+                  caption="Base catalog value"
+                />
+                <Metric
+                  label="ACTIVE STAFF ACCESS"
+                  value={String(staff.filter((member) => member.status === "Active").length)}
+                  caption={`${staff.filter((member) => member.status === "Invited").length} pending invitation`}
+                />
+                <Metric label="AUDIT EVENTS TODAY" value="28" caption="All operations recorded" />
+              </div>
 
-          {view === "Rules" && <div className="admin-grid rules-grid"><section className="admin-panel"><PanelTitle eyebrow="TAX CONFIGURATION" title="Localized tax rules" />{taxes.map((tax) => <div className="rule-row" key={tax.id}><div><strong>{tax.name} <span>{tax.rate}%</span></strong><small>{tax.scope}</small></div><button className={tax.active ? "toggle on" : "toggle"} type="button" aria-label={`Toggle ${tax.name}`} onClick={() => toggleTax(tax.id)}><i /></button></div>)}</section><section className="admin-panel"><PanelTitle eyebrow="PROMOTIONS" title="Discount schemes" />{discounts.map((discount) => <div className="rule-row" key={discount.id}><div><strong>{discount.name} <span>{discount.type === "Percentage" ? `${discount.value}%` : `₹${discount.value.toLocaleString("en-IN")}`}</span></strong><small>{discount.limit} redemption limit</small></div><button className={discount.active ? "toggle on" : "toggle"} type="button" aria-label={`Toggle ${discount.name}`} onClick={() => toggleDiscount(discount.id)}><i /></button></div>)}</section><section className="admin-panel admin-wide"><PanelTitle eyebrow="RULE ENGINE" title="Safeguards enabled" /><div className="safeguard-grid"><InfoCard title="Tax order" text="Tax is applied after qualified discounts." /><InfoCard title="Redemption caps" text="Global limits prevent discount overuse." /><InfoCard title="Quote locking" text="Pricing is protected through the quote validity period." /></div></section></div>}
+              <div className="admin-grid">
+                <section className="admin-panel">
+                  <PanelTitle eyebrow="ATTENTION" title="Configuration checks" />
+                  <ul className="admin-checks">
+                    <li>
+                      <span className="check-good">✓</span>
+                      <div>
+                        <strong>Customer records synced</strong>
+                        <small>{customers.length} commercial entities active across domestic tax jurisdictions.</small>
+                      </div>
+                    </li>
+                    <li>
+                      <span className="check-good">✓</span>
+                      <div>
+                        <strong>Tax rules are current</strong>
+                        <small>India GST and B2B reverse-charge rules are active.</small>
+                      </div>
+                    </li>
+                    <li>
+                      <span className="check-warn">!</span>
+                      <div>
+                        <strong>One customer has overdue balance</strong>
+                        <small>Brightleaf Retail Ltd is currently flagged as Past Due.</small>
+                      </div>
+                    </li>
+                    <li>
+                      <span className="check-good">✓</span>
+                      <div>
+                        <strong>Staff access reviewed</strong>
+                        <small>Three active internal accounts with no pending escalations.</small>
+                      </div>
+                    </li>
+                  </ul>
+                </section>
 
-          {view === "Staff access" && <section className="admin-panel"><PanelTitle eyebrow="INTERNAL ACCESS" title="Staff accounts & permissions" button="Invite staff" onButton={() => setStaffDialog(true)} /><div className="admin-table-wrap"><table><thead><tr><th>TEAM MEMBER</th><th>ROLE</th><th>STATUS</th><th>ACCESS</th><th /></tr></thead><tbody>{staff.map((member) => <tr key={member.id}><td><strong>{member.name}</strong><small>{member.email}</small></td><td>{member.role}</td><td><span className={member.status === "Active" ? "admin-status green" : "admin-status amber"}>{member.status}</span></td><td>{member.role === "Administrator" ? "Full system control" : "Staff workspace"}</td><td><button className="admin-row-button" type="button" onClick={() => showNotice(`${member.name}'s access is ready to edit when identity management is connected.`)}>Manage</button></td></tr>)}</tbody></table></div></section>}
+                <section className="admin-panel">
+                  <PanelTitle
+                    eyebrow="LATEST ACTIVITY"
+                    title="Audit trail"
+                    action={() => setView("Audit log")}
+                  />
+                  <ActivityList entries={audit.slice(0, 4)} />
+                </section>
+              </div>
+            </>
+          )}
 
-          {view === "Reports" && <><div className="admin-kpis"><Metric label="ESTIMATED MRR" value="₹22,231" caption="Normalized 30-day revenue" /><Metric label="OVERDUE RECEIVABLES" value="₹4,708" caption="One invoice needs attention" /><Metric label="ACTIVE SUBSCRIPTIONS" value="2" caption="Across six customer accounts" /><Metric label="GROSS CHURN" value="2.1%" caption="Current reporting period" /></div><section className="admin-panel"><PanelTitle eyebrow="REPORTING READINESS" title="Financial analytics" /><div className="report-bars">{[72, 88, 65, 94, 79, 86].map((height, index) => <div key={height}><i style={{ height: `${height}%` }} /><span>{["May", "Jun", "Jul", "Aug", "Sep", "Oct"][index]}</span></div>)}</div><p className="report-note">Metrics shown from the demo operational dataset. Production reporting requires materialized database views and scheduled refreshes.</p></section></>}
+          {/* View: Customer Records */}
+          {view === "Customer records" && (
+            <section className="admin-panel">
+              <div className="admin-panel-top">
+                <div>
+                  <p className="panel-eyebrow">CONSUMER & ACCOUNT DIRECTORY</p>
+                  <h2>Customer records</h2>
+                </div>
+                <div className="admin-filter-bar">
+                  <input
+                    type="search"
+                    className="admin-search-input"
+                    placeholder="Search company, contact, city, tax ID..."
+                    value={customerSearch}
+                    onChange={(e) => setCustomerSearch(e.target.value)}
+                  />
+                  <select
+                    value={customerFilter}
+                    onChange={(e) => setCustomerFilter(e.target.value)}
+                  >
+                    <option value="All">All statuses</option>
+                    <option value="Active">Active only</option>
+                    <option value="Past Due">Past due only</option>
+                    <option value="Onboarding">Onboarding</option>
+                  </select>
+                  <button
+                    type="button"
+                    className="admin-button small"
+                    onClick={() => setCustomerDialog(true)}
+                  >
+                    <Icon name="plus" size={13} /> Add consumer
+                  </button>
+                </div>
+              </div>
 
-          {view === "Audit log" && <section className="admin-panel"><div className="admin-panel-top"><div><p className="panel-eyebrow">SYSTEM HISTORY</p><h2>Audit log</h2></div><select value={auditFilter} onChange={(event) => setAuditFilter(event.target.value)}><option>All</option><option>Catalog</option><option>Tax rules</option><option>Discounts</option><option>Staff access</option><option>Invoicing</option><option>Subscriptions</option></select></div><ActivityList entries={filteredAudit} detailed /></section>}
+              <div className="admin-table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>CUSTOMER / COMPANY</th>
+                      <th>TAX ID / JURISDICTION</th>
+                      <th>CONTRACTS</th>
+                      <th>LIFETIME SPEND</th>
+                      <th>STATUS</th>
+                      <th />
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filteredCustomers.length === 0 ? (
+                      <tr>
+                        <td
+                          colSpan={6}
+                          style={{
+                            textAlign: "center",
+                            padding: "32px",
+                            color: "var(--admin-muted)",
+                          }}
+                        >
+                          No customer records found matching your query.
+                        </td>
+                      </tr>
+                    ) : (
+                      filteredCustomers.map((cust) => (
+                        <tr key={cust.id}>
+                          <td>
+                            <strong>{cust.company}</strong>
+                            <small>{cust.name} · {cust.email}</small>
+                          </td>
+                          <td>
+                            <strong>{cust.taxId}</strong>
+                            <small>{cust.city}, India</small>
+                          </td>
+                          <td>{cust.activeContracts} active</td>
+                          <td>₹{cust.totalSpend.toLocaleString("en-IN")}</td>
+                          <td>
+                            <span
+                              className={
+                                cust.status === "Active"
+                                  ? "admin-status green"
+                                  : cust.status === "Past Due"
+                                  ? "admin-status amber"
+                                  : "admin-status gray"
+                              }
+                            >
+                              {cust.status}
+                            </span>
+                          </td>
+                          <td>
+                            <button
+                              className="admin-row-button"
+                              type="button"
+                              onClick={() => setSelectedCustomer(cust)}
+                            >
+                              View details <Icon name="arrowRight" size={12} />
+                            </button>
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          )}
+
+          {/* View: Catalog */}
+          {view === "Catalog" && (
+            <section className="admin-panel">
+              <PanelTitle
+                eyebrow="PRODUCT CATALOG"
+                title="Plans, variants & pricing"
+                button="Add product"
+                onButton={() => setProductDialog(true)}
+              />
+              <div className="admin-table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>PRODUCT</th>
+                      <th>BASE PRICE</th>
+                      <th>INTERVAL</th>
+                      <th>VARIANTS</th>
+                      <th>STATUS</th>
+                      <th />
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {products.map((product) => (
+                      <tr key={product.id}>
+                        <td>
+                          <strong>{product.name}</strong>
+                          <small>{product.description}</small>
+                        </td>
+                        <td>₹{product.price.toLocaleString("en-IN")}</td>
+                        <td>{product.interval}</td>
+                        <td>{product.variants}</td>
+                        <td>
+                          <span
+                            className={
+                              product.status === "Active" ? "admin-status green" : "admin-status gray"
+                            }
+                          >
+                            {product.status}
+                          </span>
+                        </td>
+                        <td>
+                          <button
+                            className="admin-row-button"
+                            type="button"
+                            onClick={() => toggleProduct(product.id)}
+                          >
+                            {product.status === "Active" ? "Archive" : "Activate"}
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          )}
+
+          {/* View: Rules */}
+          {view === "Rules" && (
+            <div className="admin-grid rules-grid">
+              <section className="admin-panel">
+                <PanelTitle eyebrow="TAX CONFIGURATION" title="Localized tax rules" />
+                {taxes.map((tax) => (
+                  <div className="rule-row" key={tax.id}>
+                    <div>
+                      <strong>
+                        {tax.name} <span>{tax.rate}%</span>
+                      </strong>
+                      <small>{tax.scope}</small>
+                    </div>
+                    <button
+                      className={tax.active ? "toggle on" : "toggle"}
+                      type="button"
+                      aria-label={`Toggle ${tax.name}`}
+                      onClick={() => toggleTax(tax.id)}
+                    >
+                      <i />
+                    </button>
+                  </div>
+                ))}
+              </section>
+
+              <section className="admin-panel">
+                <PanelTitle eyebrow="PROMOTIONS" title="Discount schemes" />
+                {discounts.map((discount) => (
+                  <div className="rule-row" key={discount.id}>
+                    <div>
+                      <strong>
+                        {discount.name}{" "}
+                        <span>
+                          {discount.type === "Percentage"
+                            ? `${discount.value}%`
+                            : `₹${discount.value.toLocaleString("en-IN")}`}
+                        </span>
+                      </strong>
+                      <small>{discount.limit} redemption limit</small>
+                    </div>
+                    <button
+                      className={discount.active ? "toggle on" : "toggle"}
+                      type="button"
+                      aria-label={`Toggle ${discount.name}`}
+                      onClick={() => toggleDiscount(discount.id)}
+                    >
+                      <i />
+                    </button>
+                  </div>
+                ))}
+              </section>
+
+              <section className="admin-panel admin-wide">
+                <PanelTitle eyebrow="RULE ENGINE" title="Safeguards enabled" />
+                <div className="safeguard-grid">
+                  <InfoCard title="Tax order" text="Tax is applied after qualified discounts." />
+                  <InfoCard title="Redemption caps" text="Global limits prevent discount overuse." />
+                  <InfoCard
+                    title="Quote locking"
+                    text="Pricing is protected through the quote validity period."
+                  />
+                </div>
+              </section>
+            </div>
+          )}
+
+          {/* View: Staff access */}
+          {view === "Staff access" && (
+            <section className="admin-panel">
+              <PanelTitle
+                eyebrow="INTERNAL ACCESS"
+                title="Staff accounts & permissions"
+                button="Invite staff"
+                onButton={() => setStaffDialog(true)}
+              />
+              <div className="admin-table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>TEAM MEMBER</th>
+                      <th>ROLE</th>
+                      <th>STATUS</th>
+                      <th>ACCESS</th>
+                      <th />
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {staff.map((member) => (
+                      <tr key={member.id}>
+                        <td>
+                          <strong>{member.name}</strong>
+                          <small>{member.email}</small>
+                        </td>
+                        <td>{member.role}</td>
+                        <td>
+                          <span
+                            className={
+                              member.status === "Active" ? "admin-status green" : "admin-status amber"
+                            }
+                          >
+                            {member.status}
+                          </span>
+                        </td>
+                        <td>
+                          {member.role === "Administrator" ? "Full system control" : "Staff workspace"}
+                        </td>
+                        <td>
+                          <button
+                            className="admin-row-button"
+                            type="button"
+                            onClick={() =>
+                              showNotice(
+                                `${member.name}'s access is ready to edit when identity management is connected.`
+                              )
+                            }
+                          >
+                            Manage
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          )}
+
+          {/* View: Reports */}
+          {view === "Reports" && (
+            <>
+              <div className="admin-kpis">
+                <Metric label="ESTIMATED MRR" value="₹22,231" caption="Normalized 30-day revenue" />
+                <Metric
+                  label="OVERDUE RECEIVABLES"
+                  value="₹4,708"
+                  caption="One invoice needs attention"
+                />
+                <Metric
+                  label="ACTIVE SUBSCRIPTIONS"
+                  value="2"
+                  caption="Across six customer accounts"
+                />
+                <Metric label="GROSS CHURN" value="2.1%" caption="Current reporting period" />
+              </div>
+              <section className="admin-panel">
+                <PanelTitle eyebrow="REPORTING READINESS" title="Financial analytics" />
+                <div className="report-bars">
+                  {[72, 88, 65, 94, 79, 86].map((height, index) => (
+                    <div key={height}>
+                      <i style={{ height: `${height}%` }} />
+                      <span>{["May", "Jun", "Jul", "Aug", "Sep", "Oct"][index]}</span>
+                    </div>
+                  ))}
+                </div>
+                <p className="report-note">
+                  Metrics shown from the demo operational dataset. Production reporting requires
+                  materialized database views and scheduled refreshes.
+                </p>
+              </section>
+            </>
+          )}
+
+          {/* View: Audit log */}
+          {view === "Audit log" && (
+            <section className="admin-panel">
+              <div className="admin-panel-top">
+                <div>
+                  <p className="panel-eyebrow">SYSTEM HISTORY</p>
+                  <h2>Audit log</h2>
+                </div>
+                <select
+                  value={auditFilter}
+                  onChange={(event) => setAuditFilter(event.target.value)}
+                >
+                  <option>All</option>
+                  <option>Customer records</option>
+                  <option>Catalog</option>
+                  <option>Tax rules</option>
+                  <option>Discounts</option>
+                  <option>Staff access</option>
+                  <option>Invoicing</option>
+                  <option>Subscriptions</option>
+                </select>
+              </div>
+              <ActivityList entries={filteredAudit} detailed />
+            </section>
+          )}
         </div>
       </section>
 
-      {productDialog && <Dialog title="Add catalog product" onClose={() => setProductDialog(false)}><form onSubmit={submitProduct}><label>Product name<input name="name" required placeholder="e.g. Support Plus" /></label><label>Description<input name="description" required placeholder="A short internal description" /></label><div className="dialog-grid"><label>Base price (₹)<input name="price" type="number" min="0" required /></label><label>Billing interval<select name="interval"><option>Monthly</option><option>Yearly</option></select></label></div><DialogActions onClose={() => setProductDialog(false)} label="Add product" /></form></Dialog>}
-      {staffDialog && <Dialog title="Invite staff member" onClose={() => setStaffDialog(false)}><form onSubmit={submitStaff}><label>Full name<input name="name" required placeholder="Name" /></label><label>Work email<input name="email" type="email" required placeholder="name@payloop.internal" /></label><label>Role<select name="role"><option>Operations Specialist</option><option>Billing Manager</option><option>Administrator</option></select></label><DialogActions onClose={() => setStaffDialog(false)} label="Prepare invitation" /></form></Dialog>}
+      {/* Customer Record Detail Modal */}
+      {selectedCustomer && (
+        <Dialog
+          title={`Consumer: ${selectedCustomer.company}`}
+          onClose={() => setSelectedCustomer(null)}
+        >
+          <div className="admin-detail-sheet">
+            <div className="admin-detail-grid">
+              <div className="admin-detail-item">
+                <strong>Contact Person</strong>
+                <span>{selectedCustomer.name}</span>
+              </div>
+              <div className="admin-detail-item">
+                <strong>Email Address</strong>
+                <span>{selectedCustomer.email}</span>
+              </div>
+              <div className="admin-detail-item">
+                <strong>Phone Number</strong>
+                <span>{selectedCustomer.phone}</span>
+              </div>
+              <div className="admin-detail-item">
+                <strong>Billing City</strong>
+                <span>{selectedCustomer.city}, India</span>
+              </div>
+              <div className="admin-detail-item">
+                <strong>Tax Identifier (GSTIN)</strong>
+                <span>{selectedCustomer.taxId}</span>
+              </div>
+              <div className="admin-detail-item">
+                <strong>Account Status</strong>
+                <span
+                  style={{
+                    color:
+                      selectedCustomer.status === "Active"
+                        ? "var(--admin-green)"
+                        : selectedCustomer.status === "Past Due"
+                        ? "var(--admin-amber)"
+                        : "var(--admin-muted)",
+                  }}
+                >
+                  {selectedCustomer.status}
+                </span>
+              </div>
+              <div className="admin-detail-item">
+                <strong>Active Subscriptions</strong>
+                <span>{selectedCustomer.activeContracts} contract(s)</span>
+              </div>
+              <div className="admin-detail-item">
+                <strong>Lifetime Revenue</strong>
+                <span>₹{selectedCustomer.totalSpend.toLocaleString("en-IN")}</span>
+              </div>
+            </div>
+            <div className="dialog-actions">
+              <button
+                type="button"
+                onClick={() => {
+                  navigator.clipboard?.writeText(selectedCustomer.taxId);
+                  showNotice(`Copied Tax ID ${selectedCustomer.taxId} to clipboard.`);
+                }}
+              >
+                Copy Tax ID
+              </button>
+              <button
+                type="button"
+                style={{ background: "var(--admin-dark)", color: "#fff" }}
+                onClick={() => {
+                  addAudit(`Audited consumer record for ${selectedCustomer.company}`, "Customer records");
+                  showNotice(`Audit logged for ${selectedCustomer.company}.`);
+                  setSelectedCustomer(null);
+                }}
+              >
+                Audit Consumer
+              </button>
+            </div>
+          </div>
+        </Dialog>
+      )}
+
+      {/* Register Customer Dialog */}
+      {customerDialog && (
+        <Dialog title="Register consumer record" onClose={() => setCustomerDialog(false)}>
+          <form onSubmit={submitCustomer}>
+            <label>
+              Company / Organization name
+              <input name="company" required placeholder="e.g. Apex Studio Pvt Ltd" />
+            </label>
+            <div className="dialog-grid">
+              <label>
+                Primary contact person
+                <input name="name" required placeholder="Full name" />
+              </label>
+              <label>
+                Billing email
+                <input name="email" type="email" required placeholder="billing@company.com" />
+              </label>
+            </div>
+            <div className="dialog-grid">
+              <label>
+                Phone number
+                <input name="phone" placeholder="+91 98000 00000" />
+              </label>
+              <label>
+                City
+                <input name="city" placeholder="e.g. Mumbai" />
+              </label>
+            </div>
+            <label>
+              Tax ID / GSTIN
+              <input name="taxId" placeholder="e.g. 27AABCA1234F1Z0" />
+            </label>
+            <DialogActions onClose={() => setCustomerDialog(false)} label="Create record" />
+          </form>
+        </Dialog>
+      )}
+
+      {/* Product Dialog */}
+      {productDialog && (
+        <Dialog title="Add catalog product" onClose={() => setProductDialog(false)}>
+          <form onSubmit={submitProduct}>
+            <label>
+              Product name
+              <input name="name" required placeholder="e.g. Support Plus" />
+            </label>
+            <label>
+              Description
+              <input name="description" required placeholder="A short internal description" />
+            </label>
+            <div className="dialog-grid">
+              <label>
+                Base price (₹)
+                <input name="price" type="number" min="0" required />
+              </label>
+              <label>
+                Billing interval
+                <select name="interval">
+                  <option>Monthly</option>
+                  <option>Yearly</option>
+                </select>
+              </label>
+            </div>
+            <DialogActions onClose={() => setProductDialog(false)} label="Add product" />
+          </form>
+        </Dialog>
+      )}
+
+      {/* Staff Dialog */}
+      {staffDialog && (
+        <Dialog title="Invite staff member" onClose={() => setStaffDialog(false)}>
+          <form onSubmit={submitStaff}>
+            <label>
+              Full name
+              <input name="name" required placeholder="Name" />
+            </label>
+            <label>
+              Work email
+              <input name="email" type="email" required placeholder="name@payloop.internal" />
+            </label>
+            <label>
+              Role
+              <select name="role">
+                <option>Operations Specialist</option>
+                <option>Billing Manager</option>
+                <option>Administrator</option>
+              </select>
+            </label>
+            <DialogActions onClose={() => setStaffDialog(false)} label="Prepare invitation" />
+          </form>
+        </Dialog>
+      )}
+
       {notice && <div className="admin-toast">{notice}</div>}
     </main>
   );
 }
 
-function Metric({ label, value, caption }: { label: string; value: string; caption: string }) { return <article className="admin-metric"><span>{label}</span><strong>{value}</strong><small>{caption}</small></article>; }
-function PanelTitle({ eyebrow, title, button, onButton, action }: { eyebrow: string; title: string; button?: string; onButton?: () => void; action?: () => void }) { return <div className="admin-panel-title"><div><p>{eyebrow}</p><h2>{title}</h2></div>{button && <button type="button" className="admin-button small" onClick={onButton}><Icon name="plus" size={13} />{button}</button>}{action && <button type="button" className="admin-row-button" onClick={action}>View all <Icon name="arrowRight" size={13} /></button>}</div>; }
-function ActivityList({ entries, detailed = false }: { entries: AuditEntry[]; detailed?: boolean }) { return <div className={detailed ? "activity-list detailed" : "activity-list"}>{entries.map((entry) => <div key={entry.id}><span className="activity-mark"><Icon name="check" size={12} /></span><p><strong>{entry.action}</strong><small>{entry.actor} · {entry.area} · {entry.time}</small></p>{detailed && <code>{entry.id}</code>}</div>)}</div>; }
-function InfoCard({ title, text }: { title: string; text: string }) { return <div className="info-card"><Icon name="check" size={15} /><strong>{title}</strong><span>{text}</span></div>; }
-function Dialog({ title, onClose, children }: { title: string; onClose: () => void; children: React.ReactNode }) { return <div className="admin-modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}><section className="admin-modal" role="dialog" aria-modal="true"><button type="button" className="admin-close" onClick={onClose}><Icon name="x" size={17} /></button><p>ADMIN CONSOLE</p><h2>{title}</h2>{children}</section></div>; }
-function DialogActions({ onClose, label }: { onClose: () => void; label: string }) { return <div className="dialog-actions"><button type="button" onClick={onClose}>Cancel</button><button type="submit">{label}</button></div>; }
+function Metric({ label, value, caption }: { label: string; value: string; caption: string }) {
+  return (
+    <article className="admin-metric">
+      <span>{label}</span>
+      <strong>{value}</strong>
+      <small>{caption}</small>
+    </article>
+  );
+}
+
+function PanelTitle({
+  eyebrow,
+  title,
+  button,
+  onButton,
+  action,
+}: {
+  eyebrow: string;
+  title: string;
+  button?: string;
+  onButton?: () => void;
+  action?: () => void;
+}) {
+  return (
+    <div className="admin-panel-title">
+      <div>
+        <p>{eyebrow}</p>
+        <h2>{title}</h2>
+      </div>
+      {button && (
+        <button type="button" className="admin-button small" onClick={onButton}>
+          <Icon name="plus" size={13} />
+          {button}
+        </button>
+      )}
+      {action && (
+        <button type="button" className="admin-row-button" onClick={action}>
+          View all <Icon name="arrowRight" size={13} />
+        </button>
+      )}
+    </div>
+  );
+}
+
+function ActivityList({ entries, detailed = false }: { entries: AuditEntry[]; detailed?: boolean }) {
+  return (
+    <div className={detailed ? "activity-list detailed" : "activity-list"}>
+      {entries.map((entry) => (
+        <div key={entry.id}>
+          <span className="activity-mark">
+            <Icon name="check" size={12} />
+          </span>
+          <p>
+            <strong>{entry.action}</strong>
+            <small>
+              {entry.actor} · {entry.area} · {entry.time}
+            </small>
+          </p>
+          {detailed && <code>{entry.id}</code>}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function InfoCard({ title, text }: { title: string; text: string }) {
+  return (
+    <div className="info-card">
+      <Icon name="check" size={15} />
+      <strong>{title}</strong>
+      <span>{text}</span>
+    </div>
+  );
+}
+
+function Dialog({
+  title,
+  onClose,
+  children,
+}: {
+  title: string;
+  onClose: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <div
+      className="admin-modal-backdrop"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) onClose();
+      }}
+    >
+      <section className="admin-modal" role="dialog" aria-modal="true">
+        <button type="button" className="admin-close" onClick={onClose}>
+          <Icon name="x" size={17} />
+        </button>
+        <p>ADMIN CONSOLE</p>
+        <h2>{title}</h2>
+        {children}
+      </section>
+    </div>
+  );
+}
+
+function DialogActions({ onClose, label }: { onClose: () => void; label: string }) {
+  return (
+    <div className="dialog-actions">
+      <button type="button" onClick={onClose}>
+        Cancel
+      </button>
+      <button type="submit">{label}</button>
+    </div>
+  );
+}

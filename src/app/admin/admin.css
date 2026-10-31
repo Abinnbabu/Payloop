@@ -893,3 +893,73 @@
     width: 100%;
   }
 }
+
+/* Customer Records Admin Styles */
+.admin-nav-count {
+  display: grid;
+  width: 19px;
+  height: 19px;
+  place-items: center;
+  margin-left: auto;
+  border-radius: 50%;
+  color: #8a8379;
+  background: #efede8;
+  font-size: 9px;
+  font-weight: 600;
+}
+
+.admin-filter-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.admin-search-input {
+  width: 220px;
+  border: 1px solid #eae6df;
+  border-radius: 8px;
+  padding: 8px 11px;
+  color: #37332d;
+  background: #ffffff;
+  font: 400 11px var(--admin-font-sans);
+  outline: none;
+  transition: border-color .15s, box-shadow .15s;
+}
+
+.admin-search-input:focus {
+  border-color: #d29a79;
+  box-shadow: 0 0 0 3px rgba(210, 154, 121, .12);
+}
+
+.admin-detail-sheet {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  margin-top: 10px;
+}
+
+.admin-detail-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  background: #fcfaf7;
+  border: 1px solid #eeece7;
+  border-radius: 10px;
+  padding: 15px;
+}
+
+.admin-detail-item strong {
+  display: block;
+  font-size: 9px;
+  color: #8a837b;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin-bottom: 3px;
+}
+
+.admin-detail-item span {
+  display: block;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: #25231f;
+}

@@ -872,6 +872,13 @@ export function StaffClient() {
                   <small>Aanya Mehta (Self-service)</small>
                 </div>
               </Link>
+              <Link href="/admin" className="popover-item" onClick={() => setWorkspaceDropdownOpen(false)}>
+                <span className="popover-dot purple-dot" />
+                <div>
+                  <strong>Admin console</strong>
+                  <small>System configuration &amp; governance</small>
+                </div>
+              </Link>
             </div>
           )}
         </div>
@@ -962,7 +969,7 @@ export function StaffClient() {
           </div>
 
           <div className="sidebar-account">
-            <span className="sidebar-account-avatar">N</span>
+            <span className="sidebar-account-avatar">SR</span>
             <div className="sidebar-account-copy">
               <strong>Siddharth Rao</strong>
               <small>Operations Specialist</small>

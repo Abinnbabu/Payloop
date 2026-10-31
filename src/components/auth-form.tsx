@@ -1,12 +1,16 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { useState, type FormEvent } from "react";
 import { Icon } from "@/components/icon";
 
-export function AuthForm({ mode }: { mode: "login" | "signup" | "reset" }) {
-  const router = useRouter();
+export function AuthForm({
+  mode,
+  next,
+}: {
+  mode: "login" | "signup" | "reset";
+  next?: string;
+}) {
   const [submitted, setSubmitted] = useState(false);
   const [loading, setLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
@@ -22,28 +26,27 @@ export function AuthForm({ mode }: { mode: "login" | "signup" | "reset" }) {
       const data = new FormData(form);
       const email = String(data.get("email") ?? "").trim();
       const password = String(data.get("password") ?? "");
-
       setLoading(true);
 
       try {
         const res = await fetch("/api/auth/login", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ email, password }),
+          body: JSON.stringify({ email, password, next }),
         });
-
         const result = await res.json();
-
         if (res.ok && result.success && result.redirect) {
-          // Dynamically navigate to destination (e.g. /admin for admin@gmail.com)
           window.location.href = result.redirect;
           return;
-        } else {
-          setErrorMessage(result.error || "Invalid email or password. Please try again.");
-          setLoading(false);
         }
-      } catch (err) {
-        setErrorMessage("Network error during login. Please check connection and try again.");
+        setErrorMessage(
+          result.error || "Invalid email or password. Please try again."
+        );
+        setLoading(false);
+      } catch {
+        setErrorMessage(
+          "Network error during login. Please check connection and try again."
+        );
         setLoading(false);
       }
       return;
@@ -66,7 +69,11 @@ export function AuthForm({ mode }: { mode: "login" | "signup" | "reset" }) {
       <div className="auth-layout">
         <section className="auth-aside">
           <p className="eyebrow">
-            {isSignup ? "YOUR NEXT GOOD THING" : isReset ? "A LITTLE RESET" : "GOOD TO SEE YOU AGAIN"}
+            {isSignup
+              ? "YOUR NEXT GOOD THING"
+              : isReset
+                ? "A LITTLE RESET"
+                : "GOOD TO SEE YOU AGAIN"}
           </p>
           <h1>
             {isSignup ? (
@@ -81,8 +88,8 @@ export function AuthForm({ mode }: { mode: "login" | "signup" | "reset" }) {
             {isSignup
               ? "One little account. A clearer view of every plan, payment, and invoice."
               : isReset
-              ? "A fresh start is only a few clicks away. Let’s get you back in."
-              : "Your plans, payments, and the little details in between are right where you left them."}
+                ? "A fresh start is only a few clicks away. Let’s get you back in."
+                : "Your plans, payments, and the little details in between are right where you left them."}
           </p>
           <div className="auth-aside-note">
             <span className="note-dot" /> Your subscriptions, all in a happier place.
@@ -96,28 +103,24 @@ export function AuthForm({ mode }: { mode: "login" | "signup" | "reset" }) {
           <p className="panel-eyebrow">
             {isSignup ? "LET’S GET YOU SET UP" : isReset ? "PASSWORD RESET" : "YOUR PAYLOOP ACCOUNT"}
           </p>
-          <h2>{isSignup ? "Create your account" : isReset ? "Forgot your password?" : "Log in"}</h2>
+          <h2>
+            {isSignup ? "Create your account" : isReset ? "Forgot your password?" : "Log in"}
+          </h2>
           <p className="auth-card-description">
             {isSignup
               ? "Start managing your subscriptions in one clear place."
               : isReset
-              ? "Enter your email and we’ll send a reset link if an account is registered."
-              : "Enter your details to pick up where you left off."}
+                ? "Enter your email and we’ll send a reset link if an account is registered."
+                : "Enter your details to pick up where you left off."}
           </p>
 
           {errorMessage && (
             <div
               style={{
-                display: "flex",
-                alignItems: "center",
-                gap: "8px",
-                padding: "10px 14px",
-                marginBottom: "16px",
-                borderRadius: "8px",
-                background: "#fdf0ee",
-                border: "1px solid #fad3ce",
-                color: "#b7382c",
-                fontSize: "11px",
+                display: "flex", alignItems: "center", gap: "8px",
+                padding: "10px 14px", marginBottom: "16px",
+                borderRadius: "8px", background: "#fdf0ee",
+                border: "1px solid #fad3ce", color: "#b7382c", fontSize: "11px",
               }}
             >
               <Icon name="x" size={14} />
@@ -134,15 +137,15 @@ export function AuthForm({ mode }: { mode: "login" | "signup" | "reset" }) {
                 {isSignup
                   ? "You’re ready for the next step."
                   : isReset
-                  ? "If your email is registered, a reset link is on its way."
-                  : "You’re all set for the demo."}
+                    ? "If your email is registered, a reset link is on its way."
+                    : "You’re all set for the demo."}
               </strong>
               <p>
                 {isSignup
                   ? "Account creation will be available when authentication is connected."
                   : isReset
-                  ? "Email delivery is not connected yet, so no message was sent."
-                  : "Authentication is not connected yet. You can explore the customer portal."}
+                    ? "Email delivery is not connected yet, so no message was sent."
+                    : "Authentication is not connected yet. You can explore the customer portal."}
               </p>
               {isReset ? (
                 <Link className="text-button" href="/login">
@@ -164,13 +167,7 @@ export function AuthForm({ mode }: { mode: "login" | "signup" | "reset" }) {
               )}
               <label>
                 Email address
-                <input
-                  name="email"
-                  type="email"
-                  autoComplete="email"
-                  placeholder="you@company.com"
-                  required
-                />
+                <input name="email" type="email" autoComplete="email" placeholder="you@company.com" required />
               </label>
               {!isReset && (
                 <label>
@@ -180,16 +177,8 @@ export function AuthForm({ mode }: { mode: "login" | "signup" | "reset" }) {
                     type="password"
                     autoComplete={isSignup ? "new-password" : "current-password"}
                     minLength={isSignup ? 9 : 1}
-                    pattern={
-                      isSignup
-                        ? "^(?=.*[a-z])(?=.*[A-Z])(?=.*[^A-Za-z0-9]).{9,}$"
-                        : undefined
-                    }
-                    title={
-                      isSignup
-                        ? "At least 9 characters with uppercase, lowercase, and a special character."
-                        : undefined
-                    }
+                    pattern={isSignup ? "^(?=.*[a-z])(?=.*[A-Z])(?=.*[^A-Za-z0-9]).{9,}$" : undefined}
+                    title={isSignup ? "At least 9 characters with uppercase, lowercase, and a special character." : undefined}
                     placeholder={isSignup ? "At least 9 characters" : "Your password"}
                     required
                   />
@@ -218,11 +207,7 @@ export function AuthForm({ mode }: { mode: "login" | "signup" | "reset" }) {
           )}
 
           <div className="auth-switch">
-            {isSignup
-              ? "Already have an account?"
-              : isReset
-              ? "Remembered your password?"
-              : "New to Payloop?"}{" "}
+            {isSignup ? "Already have an account?" : isReset ? "Remembered your password?" : "New to Payloop?"}{" "}
             <Link href={isSignup || isReset ? "/login" : "/signup"}>
               {isSignup || isReset ? "Log in" : "Create an account"}
             </Link>

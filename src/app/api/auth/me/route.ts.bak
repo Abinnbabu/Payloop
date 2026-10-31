@@ -1,0 +1,24 @@
+import { NextResponse } from "next/server";
+import { clearSession, loadSessionUser } from "@/lib/auth";
+
+export const dynamic = "force-dynamic";
+
+export async function GET() {
+  try {
+    const user = await loadSessionUser();
+    if (!user) {
+      return clearSession(
+        NextResponse.json(
+          { success: false, error: "Not authenticated" },
+          { status: 401 }
+        )
+      );
+    }
+    return NextResponse.json({ success: true, user });
+  } catch (err: any) {
+    return NextResponse.json(
+      { success: false, error: err?.message ?? "Session lookup failed" },
+      { status: 500 }
+    );
+  }
+}

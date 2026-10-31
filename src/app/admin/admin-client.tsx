@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useMemo, useState, useEffect, type FormEvent } from "react";
+import type { SessionUser } from "@/lib/auth";
 import { Icon } from "@/components/icon";
 import "./admin.css";
 
@@ -83,7 +84,13 @@ type ReportsData = {
   monthlyBars: { month: string; height: number }[];
 };
 
-export function AdminClient() {
+function initialsOf(name: string): string {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  if (parts.length >= 2) return (parts[0][0] + parts[1][0]).toUpperCase();
+  return (parts[0] ?? "?").slice(0, 2).toUpperCase();
+}
+
+export function AdminClient({ user }: { user: SessionUser }) {
   const [view, setView] = useState<View>("Overview");
   const [products, setProducts] = useState<Product[]>([]);
   const [customers, setCustomers] = useState<Customer[]>([]);
@@ -173,7 +180,7 @@ export function AdminClient() {
     const entry: AuditEntry = {
       id: `AUD-${Date.now().toString().slice(-4)}`,
       action,
-      actor: "Priya Nair",
+      actor: user.name,
       area,
       time: "Just now",
     };
@@ -573,10 +580,10 @@ export function AdminClient() {
               <i /> Connected to PostgreSQL
             </span>
             <div className="admin-profile">
-              <span className="admin-avatar">PN</span>
+              <span className="admin-avatar">{user.name.split(/\s+/).filter(Boolean).map((w) => w[0]).slice(0, 2).join("").toUpperCase()}</span>
               <div>
-                <strong>Priya Nair</strong>
-                <small>admin@gmail.com</small>
+                <strong>{user.name}</strong>
+                <small>{user.email}</small>
               </div>
             </div>
             <Link href="/login" className="admin-button secondary small">

@@ -1,150 +1,168 @@
 import { NextResponse } from "next/server";
 import { query, initDb } from "@/lib/db";
+import { requireRole, authErrorResponse } from "@/lib/auth";
+import { newAuditId, newTaxId, newDiscountId } from "@/lib/ids";
 
 export const dynamic = "force-dynamic";
+const ADMIN = ["Administrator"] as const;
 
 export async function GET() {
   try {
+    await requireRole([...ADMIN, "Operations Specialist"]);
     await initDb();
-    const taxes = await query("SELECT id, name, rate, scope, active FROM taxes ORDER BY created_at ASC;");
-    const discounts = await query(
-      "SELECT id, name, type, value, redemption_limit AS limit, active FROM discounts ORDER BY created_at ASC;"
-    );
+    const [taxes, discounts] = await Promise.all([
+      query("SELECT id, name, rate, scope, active FROM taxes ORDER BY created_at ASC;"),
+      query("SELECT id, name, type, value, redemption_limit AS limit, active FROM discounts ORDER BY created_at ASC;"),
+    ]);
     return NextResponse.json({
       success: true,
       taxes: taxes.rows,
       discounts: discounts.rows,
     });
-  } catch (err: any) {
-    return NextResponse.json(
-      { success: false, error: err.message, fallback: true },
-      { status: 500 }
-    );
+  } catch (err) {
+    return authErrorResponse(err);
   }
 }
 
 export async function POST(request: Request) {
   try {
-    const body = await request.json();
-    const { kind, name, rate, scope, type, value, limit } = body;
-
+    const user = await requireRole([...ADMIN]);
+    const { kind, name, rate, scope, type, value, limit } = await request.json();
     if (!kind || !name) {
       return NextResponse.json(
-        { success: false, error: "Rule kind and name are required." },
+        { success: false, error: "kind and name required." },
         { status: 400 }
       );
     }
-
     await initDb();
-
     if (kind === "tax") {
       const taxRate = Number(rate);
-      if (isNaN(taxRate)) {
-        return NextResponse.json({ success: false, error: "Valid tax rate required." }, { status: 400 });
+      if (!Number.isFinite(taxRate) || taxRate < 0 || taxRate > 100) {
+        return NextResponse.json(
+          { success: false, error: "rate must be 0-100." },
+          { status: 400 }
+        );
       }
-      const id = `TAX-${Date.now().toString().slice(-4)}`;
+      const id = newTaxId();
       const result = await query(
         `INSERT INTO taxes (id, name, rate, scope, active)
          VALUES ($1, $2, $3, $4, TRUE)
          RETURNING id, name, rate, scope, active;`,
-        [id, name.trim(), taxRate, scope || "Domestic standard"]
+        [id, String(name).trim(), Math.round(taxRate), String(scope || "Domestic standard")]
       );
-
       await query(
-        "INSERT INTO audit_logs (id, action, actor, area) VALUES ($1, $2, $3, $4);",
-        [`AUD-${Date.now().toString().slice(-4)}`, `Created tax rule ${name} (${taxRate}%)`, "Priya Nair", "Tax rules"]
+        `INSERT INTO audit_logs (id, action, actor, area)
+         VALUES ($1, $2, $3, 'Tax rules');`,
+        [newAuditId(), `Created tax rule ${name} (${taxRate}%)`, user.name]
       );
-
       return NextResponse.json({ success: true, tax: result.rows[0] });
-    } else if (kind === "discount") {
+    }
+    if (kind === "discount") {
       const discValue = Number(value);
-      const discLimit = Number(limit) || 100;
-      if (isNaN(discValue)) {
-        return NextResponse.json({ success: false, error: "Valid discount value required." }, { status: 400 });
+      const discLimit = Math.max(1, Math.round(Number(limit) || 100));
+      if (!Number.isFinite(discValue) || discValue <= 0) {
+        return NextResponse.json(
+          { success: false, error: "value must be positive." },
+          { status: 400 }
+        );
       }
-      const id = `DISC-${Date.now().toString().slice(-4)}`;
+      const typeEnum = ["Percentage", "Fixed"].includes(type) ? type : "Percentage";
+      const id = newDiscountId();
       const result = await query(
         `INSERT INTO discounts (id, name, type, value, redemption_limit, active)
          VALUES ($1, $2, $3, $4, $5, TRUE)
          RETURNING id, name, type, value, redemption_limit AS limit, active;`,
-        [id, name.trim().toUpperCase(), type || "Percentage", discValue, discLimit]
+        [id, String(name).trim().toUpperCase(), typeEnum, Math.round(discValue), discLimit]
       );
-
       await query(
-        "INSERT INTO audit_logs (id, action, actor, area) VALUES ($1, $2, $3, $4);",
-        [`AUD-${Date.now().toString().slice(-4)}`, `Created discount scheme ${name}`, "Priya Nair", "Discounts"]
+        `INSERT INTO audit_logs (id, action, actor, area)
+         VALUES ($1, $2, $3, 'Discounts');`,
+        [newAuditId(), `Created discount scheme ${name}`, user.name]
       );
-
       return NextResponse.json({ success: true, discount: result.rows[0] });
     }
-
-    return NextResponse.json({ success: false, error: "Unknown rule kind." }, { status: 400 });
-  } catch (err: any) {
-    return NextResponse.json({ success: false, error: err.message }, { status: 500 });
+    return NextResponse.json(
+      { success: false, error: "kind must be 'tax' or 'discount'." },
+      { status: 400 }
+    );
+  } catch (err) {
+    return authErrorResponse(err);
   }
 }
 
 export async function PATCH(request: Request) {
   try {
-    const body = await request.json();
-    const { kind, id, active } = body;
-
+    const user = await requireRole([...ADMIN]);
+    const { kind, id, active } = await request.json();
     if (!kind || !id || typeof active !== "boolean") {
       return NextResponse.json(
-        { success: false, error: "Missing required parameters." },
+        { success: false, error: "kind, id, and boolean active required." },
         { status: 400 }
       );
     }
-
-    await initDb();
     const table = kind === "tax" ? "taxes" : "discounts";
-    const res = await query(`UPDATE ${table} SET active = $1 WHERE id = $2 RETURNING id, name, active;`, [active, id]);
-
+    const area = kind === "tax" ? "Tax rules" : "Discounts";
+    await initDb();
+    const res = await query(
+      `UPDATE ${table} SET active = $1 WHERE id = $2 RETURNING id, name, active;`,
+      [active, id]
+    );
     if (res.rows.length === 0) {
-      return NextResponse.json({ success: false, error: "Rule not found." }, { status: 404 });
+      return NextResponse.json(
+        { success: false, error: "Rule not found." },
+        { status: 404 }
+      );
     }
-
     const item = res.rows[0];
     await query(
-      "INSERT INTO audit_logs (id, action, actor, area) VALUES ($1, $2, $3, $4);",
-      [`AUD-${Date.now().toString().slice(-4)}`, `${active ? "Enabled" : "Disabled"} ${item.name}`, "Priya Nair", kind === "tax" ? "Tax rules" : "Discounts"]
+      `INSERT INTO audit_logs (id, action, actor, area)
+       VALUES ($1, $2, $3, $4);`,
+      [newAuditId(), `${active ? "Enabled" : "Disabled"} ${item.name}`, user.name, area]
     );
-
     return NextResponse.json({ success: true, item });
-  } catch (err: any) {
-    return NextResponse.json(
-      { success: false, error: err.message },
-      { status: 500 }
-    );
+  } catch (err) {
+    return authErrorResponse(err);
   }
 }
 
 export async function DELETE(request: Request) {
   try {
-    const { searchParams } = new URL(request.url);
-    const kind = searchParams.get("kind");
-    const id = searchParams.get("id");
-
+    const user = await requireRole([...ADMIN]);
+    const params = new URL(request.url).searchParams;
+    const kind = params.get("kind");
+    const id = params.get("id");
     if (!kind || !id) {
-      return NextResponse.json({ success: false, error: "Kind and rule id are required." }, { status: 400 });
+      return NextResponse.json(
+        { success: false, error: "kind and id required." },
+        { status: 400 }
+      );
     }
-
-    await initDb();
     const table = kind === "tax" ? "taxes" : "discounts";
-    const result = await query(`DELETE FROM ${table} WHERE id = $1 RETURNING id, name;`, [id]);
-
+    const area = kind === "tax" ? "Tax rules" : "Discounts";
+    await initDb();
+    const result = await query(
+      `DELETE FROM ${table} WHERE id = $1 RETURNING id, name;`,
+      [id]
+    );
     if (result.rows.length === 0) {
-      return NextResponse.json({ success: false, error: "Rule not found." }, { status: 404 });
+      return NextResponse.json(
+        { success: false, error: "Rule not found." },
+        { status: 404 }
+      );
     }
-
     const item = result.rows[0];
     await query(
-      "INSERT INTO audit_logs (id, action, actor, area) VALUES ($1, $2, $3, $4);",
-      [`AUD-${Date.now().toString().slice(-4)}`, `Deleted ${kind === "tax" ? "tax rule" : "discount"} ${item.name}`, "Priya Nair", kind === "tax" ? "Tax rules" : "Discounts"]
+      `INSERT INTO audit_logs (id, action, actor, area)
+       VALUES ($1, $2, $3, $4);`,
+      [
+        newAuditId(),
+        `Deleted ${kind === "tax" ? "tax rule" : "discount"} ${item.name}`,
+        user.name,
+        area,
+      ]
     );
-
     return NextResponse.json({ success: true, deleted: item });
-  } catch (err: any) {
-    return NextResponse.json({ success: false, error: err.message }, { status: 500 });
+  } catch (err) {
+    return authErrorResponse(err);
   }
 }

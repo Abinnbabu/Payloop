@@ -1,72 +1,101 @@
 import { NextResponse } from "next/server";
 import { query, initDb } from "@/lib/db";
+import { requireRole, authErrorResponse } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
 
 export async function GET() {
   try {
+    await requireRole(["Administrator", "Billing Manager", "Operations Specialist"]);
     await initDb();
 
-    // 1. Customer metrics
-    const custRes = await query(
-      `SELECT 
-         COUNT(*) AS total_customers,
-         COUNT(*) FILTER (WHERE status = 'Active') AS active_customers,
-         COUNT(*) FILTER (WHERE status = 'Past Due') AS past_due_customers,
-         COALESCE(SUM(total_spend), 0) AS total_spend,
-         COALESCE(SUM(CASE WHEN status = 'Past Due' THEN 4708 ELSE 0 END), 0) AS overdue_receivables,
-         COALESCE(SUM(active_contracts), 0) AS active_subscriptions
-       FROM customers;`
-    );
+    const [custRes, subRes, invRes, pastDueRes, trendRes] = await Promise.all([
+      query<{
+        total_customers: string;
+        active_customers: string;
+        lifetime_volume: string;
+      }>(`
+        SELECT COUNT(*) AS total_customers,
+               COUNT(*) FILTER (WHERE status = 'Active') AS active_customers,
+               COALESCE(SUM(total_spend), 0) AS lifetime_volume
+        FROM customers;
+      `),
+      query<{ active_subs: string; mrr_cents: string }>(`
+        SELECT
+          COUNT(*) FILTER (WHERE status = 'Active') AS active_subs,
+          COALESCE(SUM(
+            CASE billing_interval
+              WHEN 'Monthly' THEN total_cents
+              WHEN 'Yearly'  THEN ROUND(total_cents / 12.0)
+              WHEN 'Weekly'  THEN ROUND(total_cents * 52.0 / 12.0)
+              WHEN 'Daily'   THEN ROUND(total_cents * 365.0 / 12.0)
+              ELSE total_cents
+            END
+          ) FILTER (WHERE status = 'Active'), 0)::bigint AS mrr_cents
+        FROM subscriptions;
+      `),
+      query<{ overdue_total: string; overdue_count: string }>(`
+        SELECT COALESCE(SUM(total) FILTER (WHERE status = 'Overdue'), 0)::bigint AS overdue_total,
+               COUNT(*) FILTER (WHERE status = 'Overdue') AS overdue_count
+        FROM invoices;
+      `),
+      query<{ past_due: string }>(
+        "SELECT COUNT(*) AS past_due FROM customers WHERE status = 'Past Due';"
+      ),
+      query<{ month: string; revenue: string }>(`
+        SELECT TO_CHAR(DATE_TRUNC('month', issued_date), 'Mon') AS month,
+               COALESCE(SUM(total), 0)::bigint AS revenue
+        FROM invoices
+        WHERE status = 'Paid'
+          AND issued_date >= CURRENT_DATE - INTERVAL '6 months'
+        GROUP BY DATE_TRUNC('month', issued_date)
+        ORDER BY DATE_TRUNC('month', issued_date);
+      `),
+    ]);
 
-    // 2. Product metrics
-    const prodRes = await query(
-      `SELECT 
-         COUNT(*) AS total_products,
-         COUNT(*) FILTER (WHERE status = 'Active') AS active_products,
-         COALESCE(SUM(CASE WHEN interval = 'Monthly' AND status = 'Active' THEN price ELSE 0 END), 0) AS monthly_base_revenue
-       FROM products;`
-    );
+    const cust = custRes.rows[0] ?? ({} as any);
+    const subs = subRes.rows[0] ?? ({} as any);
+    const inv = invRes.rows[0] ?? ({} as any);
+    const pastDue = Number(pastDueRes.rows[0]?.past_due ?? 0);
+    const activeSubs = Number(subs.active_subs) || 0;
+    const estimatedMRR = Number(subs.mrr_cents) || 0;
+    const overdueTotal = Number(inv.overdue_total) || 0;
+    const activeCustomers = Number(cust.active_customers) || 0;
+    const churnPct =
+      activeCustomers > 0
+        ? ((pastDue / activeCustomers) * 100).toFixed(1) + "%"
+        : "0.0%";
 
-    const custRow = custRes.rows[0] || {};
-    const prodRow = prodRes.rows[0] || {};
-
-    const activeContracts = Number(custRow.active_subscriptions) || 2;
-    const baseMonthly = Number(prodRow.monthly_base_revenue) || 6680;
-    const totalSpend = Number(custRow.total_spend) || 362500;
-    const pastDueCount = Number(custRow.past_due_customers) || 1;
-
-    // Dynamically compute MRR
-    const estimatedMRR = Math.max(22231, Math.round(baseMonthly * Math.max(1, activeContracts) * 1.5));
-    const overdueReceivables = pastDueCount > 0 ? 4708 * pastDueCount : 0;
-    const churnRate = pastDueCount > 0 ? (pastDueCount * 1.8).toFixed(1) + "%" : "0.0%";
-
-    // Dynamically compute 6-month historical revenue trend bars
-    const baseHeight = Math.min(95, Math.max(50, Math.round((estimatedMRR / 30000) * 80)));
-    const monthlyBars = [
-      { month: "May", height: Math.max(40, baseHeight - 15) },
-      { month: "Jun", height: Math.max(45, baseHeight - 5) },
-      { month: "Jul", height: Math.max(50, baseHeight - 18) },
-      { month: "Aug", height: Math.max(60, baseHeight + 8) },
-      { month: "Sep", height: Math.max(55, baseHeight - 3) },
-      { month: "Oct", height: Math.min(100, Math.max(70, baseHeight + 5)) },
-    ];
+    const maxBar = Math.max(estimatedMRR, 1);
+    const monthlyBars =
+      trendRes.rows.length > 0
+        ? trendRes.rows.map((r) => ({
+            month: r.month,
+            height: Math.max(20, Math.round((Number(r.revenue) / maxBar) * 100)),
+          }))
+        : [
+            { month: "May", height: 60 },
+            { month: "Jun", height: 70 },
+            { month: "Jul", height: 65 },
+            { month: "Aug", height: 80 },
+            { month: "Sep", height: 75 },
+            { month: "Oct", height: 85 },
+          ];
 
     return NextResponse.json({
       success: true,
       metrics: {
-        estimatedMRR: `₹${estimatedMRR.toLocaleString("en-IN")}`,
-        overdueReceivables: `₹${overdueReceivables.toLocaleString("en-IN")}`,
-        activeSubscriptions: activeContracts,
-        totalCustomers: Number(custRow.total_customers) || 0,
-        activeCustomers: Number(custRow.active_customers) || 0,
-        grossChurn: churnRate,
-        lifetimeVolume: `₹${totalSpend.toLocaleString("en-IN")}`,
+        estimatedMRR: `\u20B9${estimatedMRR.toLocaleString("en-IN")}`,
+        overdueReceivables: `\u20B9${overdueTotal.toLocaleString("en-IN")}`,
+        activeSubscriptions: activeSubs,
+        totalCustomers: Number(cust.total_customers) || 0,
+        activeCustomers,
+        grossChurn: churnPct,
+        lifetimeVolume: `\u20B9${Number(cust.lifetime_volume || 0).toLocaleString("en-IN")}`,
         monthlyBars,
       },
     });
-  } catch (err: any) {
-    return NextResponse.json({ success: false, error: err.message }, { status: 500 });
+  } catch (err) {
+    return authErrorResponse(err);
   }
 }
-

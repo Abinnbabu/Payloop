@@ -1,0 +1,1540 @@
+"use client";
+
+import Link from "next/link";
+import { useMemo, useState, useEffect, type FormEvent } from "react";
+import { Icon } from "@/components/icon";
+import "./admin.css";
+import type { SessionUser } from "@/lib/auth";
+
+type View =
+  | "Overview"
+  | "Customer records"
+  | "Catalog"
+  | "Rules"
+  | "Staff access"
+  | "Reports"
+  | "Audit log";
+
+type Product = {
+  id: string;
+  name: string;
+  description: string;
+  price: number;
+  interval: string;
+  status: "Active" | "Archived";
+  variants: number;
+};
+
+type Customer = {
+  id: string;
+  name: string;
+  company: string;
+  email: string;
+  phone: string;
+  city: string;
+  taxId: string;
+  activeContracts: number;
+  totalSpend: number;
+  status: "Active" | "Past Due" | "Onboarding";
+};
+
+type Discount = {
+  id: string;
+  name: string;
+  type: "Percentage" | "Fixed";
+  value: number;
+  limit: number;
+  active: boolean;
+};
+
+type Tax = {
+  id: string;
+  name: string;
+  rate: number;
+  scope: string;
+  active: boolean;
+};
+
+type StaffMember = {
+  id: string;
+  name: string;
+  email: string;
+  role: string;
+  status: "Active" | "Invited" | "Suspended";
+  permissions?: string;
+  createdAt?: string;
+};
+
+type AuditEntry = {
+  id: string;
+  action: string;
+  actor: string;
+  area: string;
+  time: string;
+};
+
+type ReportsData = {
+  estimatedMRR: string;
+  overdueReceivables: string;
+  activeSubscriptions: number;
+  totalCustomers: number;
+  activeCustomers: number;
+  grossChurn: string;
+  lifetimeVolume: string;
+  monthlyBars: { month: string; height: number }[];
+};
+
+function initialsOf(name: string): string {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  if (parts.length >= 2) return (parts[0][0] + parts[1][0]).toUpperCase();
+  return (parts[0] ?? "?").slice(0, 2).toUpperCase();
+}
+
+export function AdminClient({ user }: { user: SessionUser }) {
+  const [view, setView] = useState<View>("Overview");
+  const [products, setProducts] = useState<Product[]>([]);
+  const [customers, setCustomers] = useState<Customer[]>([]);
+  const [discounts, setDiscounts] = useState<Discount[]>([]);
+  const [taxes, setTaxes] = useState<Tax[]>([]);
+  const [staff, setStaff] = useState<StaffMember[]>([]);
+  const [audit, setAudit] = useState<AuditEntry[]>([]);
+  const [reports, setReports] = useState<ReportsData | null>(null);
+  const [notice, setNotice] = useState("");
+  const [loading, setLoading] = useState(true);
+
+  // Dialog & Filter States
+  const [productDialog, setProductDialog] = useState(false);
+  const [taxDialog, setTaxDialog] = useState(false);
+  const [discountDialog, setDiscountDialog] = useState(false);
+  const [staffDialog, setStaffDialog] = useState(false);
+  const [customerDialog, setCustomerDialog] = useState(false);
+  const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
+  const [customerSearch, setCustomerSearch] = useState("");
+  const [customerFilter, setCustomerFilter] = useState("All");
+  const [auditFilter, setAuditFilter] = useState("All");
+
+  // Selected powers for new staff member
+  const [staffPowers, setStaffPowers] = useState<string[]>([
+    "Customer records",
+    "Subscriptions & Quotes",
+    "Invoices & Billing",
+  ]);
+
+  const activeProducts = products.filter((product) => product.status === "Active").length;
+  const filteredAudit = auditFilter === "All" ? audit : audit.filter((entry) => entry.area === auditFilter);
+
+  // Initial load directly from PostgreSQL database
+  useEffect(() => {
+    setLoading(true);
+    Promise.allSettled([
+      fetch("/api/admin/customers").then((r) => (r.ok ? r.json() : null)),
+      fetch("/api/admin/catalog").then((r) => (r.ok ? r.json() : null)),
+      fetch("/api/admin/rules").then((r) => (r.ok ? r.json() : null)),
+      fetch("/api/admin/staff").then((r) => (r.ok ? r.json() : null)),
+      fetch("/api/admin/audit").then((r) => (r.ok ? r.json() : null)),
+      fetch("/api/admin/reports").then((r) => (r.ok ? r.json() : null)),
+    ]).then(([custRes, prodRes, ruleRes, staffRes, auditRes, reportRes]) => {
+      if (custRes.status === "fulfilled" && custRes.value?.success) {
+        setCustomers(custRes.value.customers || []);
+      }
+      if (prodRes.status === "fulfilled" && prodRes.value?.success) {
+        setProducts(prodRes.value.products || []);
+      }
+      if (ruleRes.status === "fulfilled" && ruleRes.value?.success) {
+        setTaxes(ruleRes.value.taxes || []);
+        setDiscounts(ruleRes.value.discounts || []);
+      }
+      if (staffRes.status === "fulfilled" && staffRes.value?.success) {
+        setStaff(staffRes.value.staff || []);
+      }
+      if (auditRes.status === "fulfilled" && auditRes.value?.success) {
+        setAudit(auditRes.value.audit || []);
+      }
+      if (reportRes.status === "fulfilled" && reportRes.value?.success) {
+        setReports(reportRes.value.metrics || null);
+      }
+      setLoading(false);
+    });
+  }, []);
+
+  const filteredCustomers = useMemo(() => {
+    return customers.filter((cust) => {
+      const matchesFilter = customerFilter === "All" || cust.status === customerFilter;
+      const query = customerSearch.trim().toLowerCase();
+      const matchesSearch =
+        !query ||
+        cust.company.toLowerCase().includes(query) ||
+        cust.name.toLowerCase().includes(query) ||
+        cust.city.toLowerCase().includes(query) ||
+        cust.taxId.toLowerCase().includes(query);
+      return matchesFilter && matchesSearch;
+    });
+  }, [customers, customerFilter, customerSearch]);
+
+  function showNotice(message: string) {
+    setNotice(message);
+    window.setTimeout(() => setNotice(""), 3500);
+  }
+
+  function addAudit(action: string, area: string) {
+    const entry: AuditEntry = {
+      id: `AUD-${Date.now().toString().slice(-4)}`,
+      action,
+      actor: "Priya Nair",
+      area,
+      time: "Just now",
+    };
+    setAudit((current) => [entry, ...current]);
+  }
+
+  // --- CATALOG OPERATIONS ---
+  function submitProduct(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const data = new FormData(event.currentTarget);
+    const name = String(data.get("name") ?? "").trim();
+    const price = Number(data.get("price"));
+    if (!name || !Number.isFinite(price) || price < 0) return showNotice("Enter a product name and valid price.");
+    const description = String(data.get("description") ?? "");
+    const interval = String(data.get("interval") ?? "Monthly");
+
+    fetch("/api/admin/catalog", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name, description, price, interval }),
+    })
+      .then((res) => res.json())
+      .then((resData) => {
+        if (resData.success && resData.product) {
+          setProducts((current) => [resData.product, ...current]);
+          addAudit(`Created product ${name}`, "Catalog");
+          setProductDialog(false);
+          showNotice(`${name} saved to database.`);
+        } else {
+          showNotice(resData.error || "Failed to create product.");
+        }
+      })
+      .catch(() => showNotice("Database network error."));
+  }
+
+  function toggleProduct(id: string) {
+    const product = products.find((item) => item.id === id);
+    if (!product) return;
+    const nextStatus = product.status === "Active" ? "Archived" : "Active";
+
+    fetch("/api/admin/catalog", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id, status: nextStatus }),
+    })
+      .then((res) => res.json())
+      .then((resData) => {
+        if (resData.success) {
+          setProducts((current) =>
+            current.map((item) => (item.id === id ? { ...item, status: nextStatus } : item))
+          );
+          const label = nextStatus === "Active" ? "activated" : "archived";
+          addAudit(`${label[0].toUpperCase()}${label.slice(1)} ${product.name}`, "Catalog");
+          showNotice(`${product.name} ${label}.`);
+        }
+      })
+      .catch(() => showNotice("Failed to update product in database."));
+  }
+
+  function deleteProduct(id: string, name: string) {
+    if (!confirm(`Are you sure you want to permanently delete "${name}" from the database?`)) return;
+
+    fetch(`/api/admin/catalog?id=${encodeURIComponent(id)}`, {
+      method: "DELETE",
+    })
+      .then((res) => res.json())
+      .then((resData) => {
+        if (resData.success) {
+          setProducts((current) => current.filter((item) => item.id !== id));
+          addAudit(`Deleted product ${name}`, "Catalog");
+          showNotice(`${name} permanently removed from database.`);
+        } else {
+          showNotice(resData.error || "Could not delete product.");
+        }
+      })
+      .catch(() => showNotice("Database error while deleting product."));
+  }
+
+  // --- RULES OPERATIONS (TAXES & DISCOUNTS) ---
+  function submitTaxRule(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const data = new FormData(event.currentTarget);
+    const name = String(data.get("name") ?? "").trim();
+    const rate = Number(data.get("rate"));
+    const scope = String(data.get("scope") ?? "Domestic standard").trim();
+
+    if (!name || isNaN(rate)) return showNotice("Provide a valid tax name and rate.");
+
+    fetch("/api/admin/rules", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ kind: "tax", name, rate, scope }),
+    })
+      .then((res) => res.json())
+      .then((resData) => {
+        if (resData.success && resData.tax) {
+          setTaxes((current) => [...current, resData.tax]);
+          addAudit(`Created tax rule ${name} (${rate}%)`, "Tax rules");
+          setTaxDialog(false);
+          showNotice(`Tax rule ${name} saved to database.`);
+        } else {
+          showNotice(resData.error || "Failed to save tax rule.");
+        }
+      })
+      .catch(() => showNotice("Database error saving tax rule."));
+  }
+
+  function submitDiscount(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const data = new FormData(event.currentTarget);
+    const name = String(data.get("name") ?? "").trim();
+    const type = String(data.get("type") ?? "Percentage") as "Percentage" | "Fixed";
+    const value = Number(data.get("value"));
+    const limit = Number(data.get("limit") ?? 100);
+
+    if (!name || isNaN(value)) return showNotice("Provide a code name and discount value.");
+
+    fetch("/api/admin/rules", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ kind: "discount", name, type, value, limit }),
+    })
+      .then((res) => res.json())
+      .then((resData) => {
+        if (resData.success && resData.discount) {
+          setDiscounts((current) => [...current, resData.discount]);
+          addAudit(`Created discount scheme ${name}`, "Discounts");
+          setDiscountDialog(false);
+          showNotice(`Discount scheme ${name} saved to database.`);
+        } else {
+          showNotice(resData.error || "Failed to save discount.");
+        }
+      })
+      .catch(() => showNotice("Database error saving discount."));
+  }
+
+  function toggleRule(kind: "tax" | "discount", id: string) {
+    if (kind === "tax") {
+      const tax = taxes.find((item) => item.id === id);
+      if (!tax) return;
+      const nextActive = !tax.active;
+
+      fetch("/api/admin/rules", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ kind: "tax", id, active: nextActive }),
+      })
+        .then((res) => res.json())
+        .then((resData) => {
+          if (resData.success) {
+            setTaxes((current) =>
+              current.map((item) => (item.id === id ? { ...item, active: nextActive } : item))
+            );
+            addAudit(`${nextActive ? "Enabled" : "Disabled"} ${tax.name}`, "Tax rules");
+            showNotice(`${tax.name} ${nextActive ? "enabled" : "disabled"} in database.`);
+          }
+        })
+        .catch(() => showNotice("Database error updating tax rule."));
+    } else {
+      const discount = discounts.find((item) => item.id === id);
+      if (!discount) return;
+      const nextActive = !discount.active;
+
+      fetch("/api/admin/rules", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ kind: "discount", id, active: nextActive }),
+      })
+        .then((res) => res.json())
+        .then((resData) => {
+          if (resData.success) {
+            setDiscounts((current) =>
+              current.map((item) => (item.id === id ? { ...item, active: nextActive } : item))
+            );
+            addAudit(`${nextActive ? "Enabled" : "Disabled"} ${discount.name}`, "Discounts");
+            showNotice(`${discount.name} ${nextActive ? "enabled" : "disabled"} in database.`);
+          }
+        })
+        .catch(() => showNotice("Database error updating discount scheme."));
+    }
+  }
+
+  function deleteRule(kind: "tax" | "discount", id: string, name: string) {
+    if (!confirm(`Delete rule "${name}" permanently from the database?`)) return;
+
+    fetch(`/api/admin/rules?kind=${encodeURIComponent(kind)}&id=${encodeURIComponent(id)}`, {
+      method: "DELETE",
+    })
+      .then((res) => res.json())
+      .then((resData) => {
+        if (resData.success) {
+          if (kind === "tax") {
+            setTaxes((curr) => curr.filter((t) => t.id !== id));
+            addAudit(`Deleted tax rule ${name}`, "Tax rules");
+          } else {
+            setDiscounts((curr) => curr.filter((d) => d.id !== id));
+            addAudit(`Deleted discount ${name}`, "Discounts");
+          }
+          showNotice(`Rule "${name}" deleted from database.`);
+        } else {
+          showNotice(resData.error || "Could not delete rule.");
+        }
+      })
+      .catch(() => showNotice("Database error while deleting rule."));
+  }
+
+  // --- STAFF ACCESS OPERATIONS ---
+  function toggleStaffPower(power: string) {
+    setStaffPowers((curr) =>
+      curr.includes(power) ? curr.filter((p) => p !== power) : [...curr, power]
+    );
+  }
+
+  function submitStaff(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const data = new FormData(event.currentTarget);
+    const name = String(data.get("name") ?? "").trim();
+    const email = String(data.get("email") ?? "").trim();
+    const password = String(data.get("password") ?? "").trim();
+    const role = String(data.get("role") ?? "Operations Specialist");
+
+    if (!name || !email || !password) {
+      return showNotice("Enter staff name, work email, and login password.");
+    }
+
+    fetch("/api/admin/staff", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name,
+        email,
+        password,
+        role,
+        permissions: staffPowers,
+      }),
+    })
+      .then((res) => res.json())
+      .then((resData) => {
+        if (resData.success && resData.staff) {
+          setStaff((current) => [resData.staff, ...current]);
+          addAudit(`Added staff profile for ${name} (${role})`, "Staff access");
+          setStaffDialog(false);
+          showNotice(`Staff profile created for ${name}. They can now log in at /login with this password.`);
+        } else {
+          showNotice(resData.error || "Failed to create staff member.");
+        }
+      })
+      .catch(() => showNotice("Database error creating staff member."));
+  }
+
+  function deleteStaff(id: string, name: string) {
+    if (id === "USR-ADMIN-01") {
+      return showNotice("Cannot delete primary administrator account.");
+    }
+    if (!confirm(`Revoke all access and remove staff member "${name}" from the database?`)) return;
+
+    fetch(`/api/admin/staff?id=${encodeURIComponent(id)}`, {
+      method: "DELETE",
+    })
+      .then((res) => res.json())
+      .then((resData) => {
+        if (resData.success) {
+          setStaff((current) => current.filter((s) => s.id !== id));
+          addAudit(`Revoked staff access for ${name}`, "Staff access");
+          showNotice(`Staff member ${name} removed from database.`);
+        } else {
+          showNotice(resData.error || "Could not remove staff account.");
+        }
+      })
+      .catch(() => showNotice("Database error revoking staff access."));
+  }
+
+  // --- CUSTOMER OPERATIONS ---
+  function submitCustomer(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const data = new FormData(event.currentTarget);
+    const company = String(data.get("company") ?? "").trim();
+    const name = String(data.get("name") ?? "").trim();
+    const email = String(data.get("email") ?? "").trim();
+    const phone = String(data.get("phone") ?? "").trim();
+    const city = String(data.get("city") ?? "").trim();
+    const taxId = String(data.get("taxId") ?? "").trim();
+    if (!company || !name || !email) return showNotice("Enter company, contact person, and email.");
+
+    fetch("/api/admin/customers", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ company, name, email, phone, city, taxId }),
+    })
+      .then((res) => res.json())
+      .then((resData) => {
+        if (resData.success && resData.customer) {
+          setCustomers((curr) => [resData.customer, ...curr]);
+          addAudit(`Registered customer record for ${company}`, "Customer records");
+          setCustomerDialog(false);
+          showNotice(`Customer record created for ${company} in database.`);
+        } else {
+          showNotice(resData.error || "Failed to save customer record.");
+        }
+      })
+      .catch(() => showNotice("Database error registering customer."));
+  }
+
+  function deleteCustomer(id: string, company: string) {
+    if (!confirm(`Permanently delete customer "${company}" from the database?`)) return;
+
+    fetch(`/api/admin/customers?id=${encodeURIComponent(id)}`, {
+      method: "DELETE",
+    })
+      .then((res) => res.json())
+      .then((resData) => {
+        if (resData.success) {
+          setCustomers((curr) => curr.filter((c) => c.id !== id));
+          if (selectedCustomer?.id === id) setSelectedCustomer(null);
+          addAudit(`Deleted customer record for ${company}`, "Customer records");
+          showNotice(`Customer ${company} deleted from database.`);
+        } else {
+          showNotice(resData.error || "Could not delete customer record.");
+        }
+      })
+      .catch(() => showNotice("Database error while deleting customer."));
+  }
+
+  const monthlyRevenue = useMemo(
+    () =>
+      products
+        .filter((product) => product.status === "Active" && product.interval === "Monthly")
+        .reduce((total, product) => total + product.price, 0),
+    [products]
+  );
+
+  return (
+    <main className="admin-shell">
+      {/* Sidebar */}
+      <aside className="admin-sidebar">
+        <Link href="/" className="admin-brand">
+          <span><i /><i /></span>payloop
+        </Link>
+        <div className="admin-badge">ADMIN CONSOLE</div>
+        <p className="admin-nav-label">SYSTEM CONTROL</p>
+        <nav>
+          {(
+            [
+              "Overview",
+              "Customer records",
+              "Catalog",
+              "Rules",
+              "Staff access",
+              "Reports",
+              "Audit log",
+            ] as View[]
+          ).map((item) => (
+            <button
+              key={item}
+              type="button"
+              className={view === item ? "admin-nav-active" : ""}
+              onClick={() => setView(item)}
+            >
+              <Icon
+                name={
+                  item === "Customer records"
+                    ? "users"
+                    : item === "Catalog"
+                      ? "layers"
+                      : item === "Audit log"
+                        ? "receipt"
+                        : item === "Reports"
+                          ? "grid"
+                          : item === "Rules"
+                            ? "sliders"
+                            : "sparkle"
+                }
+                size={16}
+              />
+              <span>{item}</span>
+              {item === "Customer records" && (
+                <span className="admin-nav-count">{customers.length}</span>
+              )}
+            </button>
+          ))}
+        </nav>
+        <div className="admin-side-note">
+          <span /> Live PostgreSQL synchronization active.
+        </div>
+      </aside>
+
+      {/* Main Content Area */}
+      <section className="admin-main">
+        {/* Top Header */}
+        <header className="admin-header">
+          <div>
+            <p className="admin-crumb">ADMINISTRATION / {view.toUpperCase()}</p>
+            <h1>{view}</h1>
+          </div>
+          <div className="admin-header-actions">
+            <span className="admin-live-indicator">
+              <i /> Connected to PostgreSQL
+            </span>
+            <div className="admin-profile">
+              <span className="admin-avatar">PN</span>
+              <div>
+                <strong>Priya Nair</strong>
+                <small>admin@gmail.com</small>
+              </div>
+            </div>
+            <Link href="/login" className="admin-button secondary small">
+              Sign out
+            </Link>
+          </div>
+        </header>
+
+        <div className="admin-content">
+          {/* View: Overview */}
+          {view === "Overview" && (
+            <>
+              <div className="admin-kpis">
+                <Metric
+                  label="LIVE CUSTOMERS"
+                  value={String(customers.length)}
+                  caption="Stored in PostgreSQL"
+                />
+                <Metric
+                  label="ACTIVE CATALOG PRODUCTS"
+                  value={String(activeProducts)}
+                  caption="Ready for billing & quotes"
+                />
+                <Metric
+                  label="MONTHLY CATALOG BASE"
+                  value={`₹${monthlyRevenue.toLocaleString("en-IN")}`}
+                  caption="Active plans sum"
+                />
+                <Metric
+                  label="ACTIVE STAFF ACCOUNTS"
+                  value={String(staff.length)}
+                  caption="Authorized team users"
+                />
+              </div>
+
+              <div className="admin-grid">
+                <section className="admin-panel">
+                  <PanelTitle
+                    eyebrow="POSTGRESQL REPOSITORY"
+                    title="Recent customer records"
+                    action={() => setView("Customer records")}
+                  />
+                  <div className="admin-table-wrap">
+                    <table>
+                      <thead>
+                        <tr>
+                          <th>COMPANY</th>
+                          <th>CONTACT</th>
+                          <th>STATUS</th>
+                          <th />
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {customers.length === 0 ? (
+                          <tr>
+                            <td colSpan={4} style={{ textAlign: "center", padding: "24px", color: "var(--admin-muted)" }}>
+                              {loading ? "Loading database records..." : "No customers registered yet."}
+                            </td>
+                          </tr>
+                        ) : (
+                          customers.slice(0, 4).map((c) => (
+                            <tr key={c.id}>
+                              <td>
+                                <strong>{c.company}</strong>
+                                <small>{c.city}</small>
+                              </td>
+                              <td>
+                                <div>{c.name}</div>
+                                <small>{c.email}</small>
+                              </td>
+                              <td>
+                                <span
+                                  className={
+                                    c.status === "Active"
+                                      ? "admin-status green"
+                                      : c.status === "Past Due"
+                                        ? "admin-status amber"
+                                        : "admin-status gray"
+                                  }
+                                >
+                                  {c.status}
+                                </span>
+                              </td>
+                              <td>
+                                <button
+                                  className="admin-row-button"
+                                  type="button"
+                                  onClick={() => setSelectedCustomer(c)}
+                                >
+                                  Inspect
+                                </button>
+                              </td>
+                            </tr>
+                          ))
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </section>
+
+                <section className="admin-panel">
+                  <PanelTitle
+                    eyebrow="AUDIT TRAIL"
+                    title="Live system actions"
+                    action={() => setView("Audit log")}
+                  />
+                  {audit.length === 0 ? (
+                    <div style={{ textAlign: "center", padding: "30px", color: "var(--admin-muted)", fontSize: "11px" }}>
+                      {loading ? "Loading audit trail..." : "No audit entries recorded."}
+                    </div>
+                  ) : (
+                    <ActivityList entries={audit.slice(0, 5)} />
+                  )}
+                </section>
+              </div>
+            </>
+          )}
+
+          {/* View: Customer records */}
+          {view === "Customer records" && (
+            <section className="admin-panel">
+              <PanelTitle
+                eyebrow="DATABASE RECORDS"
+                title="Registered customer accounts"
+                button="Register consumer"
+                onButton={() => setCustomerDialog(true)}
+              />
+              <div className="admin-panel-top">
+                <input
+                  className="admin-search-input"
+                  placeholder="Filter by company, contact person, city, or GSTIN..."
+                  value={customerSearch}
+                  onChange={(e) => setCustomerSearch(e.target.value)}
+                />
+                <select
+                  value={customerFilter}
+                  onChange={(e) => setCustomerFilter(e.target.value)}
+                >
+                  <option>All</option>
+                  <option>Active</option>
+                  <option>Past Due</option>
+                  <option>Onboarding</option>
+                </select>
+              </div>
+
+              <div className="admin-table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>COMPANY</th>
+                      <th>CONTACT</th>
+                      <th>TAX ID / GSTIN</th>
+                      <th>CONTRACTS</th>
+                      <th>TOTAL SPEND</th>
+                      <th>STATUS</th>
+                      <th>ACTIONS</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filteredCustomers.length === 0 ? (
+                      <tr>
+                        <td colSpan={7} style={{ textAlign: "center", padding: "32px", color: "var(--admin-muted)" }}>
+                          {loading ? "Fetching customer records from PostgreSQL..." : "No customer records found."}
+                        </td>
+                      </tr>
+                    ) : (
+                      filteredCustomers.map((cust) => (
+                        <tr key={cust.id}>
+                          <td>
+                            <strong>{cust.company}</strong>
+                            <small>{cust.city}, India</small>
+                          </td>
+                          <td>
+                            <strong>{cust.name}</strong>
+                            <small>{cust.email}</small>
+                          </td>
+                          <td>
+                            <code>{cust.taxId}</code>
+                          </td>
+                          <td>{cust.activeContracts} active</td>
+                          <td>₹{cust.totalSpend.toLocaleString("en-IN")}</td>
+                          <td>
+                            <span
+                              className={
+                                cust.status === "Active"
+                                  ? "admin-status green"
+                                  : cust.status === "Past Due"
+                                    ? "admin-status amber"
+                                    : "admin-status gray"
+                              }
+                            >
+                              {cust.status}
+                            </span>
+                          </td>
+                          <td>
+                            <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                              <button
+                                className="admin-row-button"
+                                type="button"
+                                onClick={() => setSelectedCustomer(cust)}
+                              >
+                                View <Icon name="arrowRight" size={12} />
+                              </button>
+                              <button
+                                className="admin-danger-button"
+                                type="button"
+                                title="Delete customer"
+                                onClick={() => deleteCustomer(cust.id, cust.company)}
+                              >
+                                <Icon name="x" size={13} />
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          )}
+
+          {/* View: Catalog */}
+          {view === "Catalog" && (
+            <section className="admin-panel">
+              <PanelTitle
+                eyebrow="PRODUCT CATALOG"
+                title="Plans, variants & pricing"
+                button="Add product"
+                onButton={() => setProductDialog(true)}
+              />
+              <div className="admin-table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>PRODUCT</th>
+                      <th>BASE PRICE</th>
+                      <th>INTERVAL</th>
+                      <th>VARIANTS</th>
+                      <th>STATUS</th>
+                      <th>ACTIONS</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {products.length === 0 ? (
+                      <tr>
+                        <td colSpan={6} style={{ textAlign: "center", padding: "32px", color: "var(--admin-muted)" }}>
+                          {loading ? "Loading catalog from PostgreSQL..." : "No products in database. Click 'Add product' to create one."}
+                        </td>
+                      </tr>
+                    ) : (
+                      products.map((product) => (
+                        <tr key={product.id}>
+                          <td>
+                            <strong>{product.name}</strong>
+                            <small>{product.description}</small>
+                          </td>
+                          <td>₹{product.price.toLocaleString("en-IN")}</td>
+                          <td>{product.interval}</td>
+                          <td>{product.variants}</td>
+                          <td>
+                            <span
+                              className={
+                                product.status === "Active" ? "admin-status green" : "admin-status gray"
+                              }
+                            >
+                              {product.status}
+                            </span>
+                          </td>
+                          <td>
+                            <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                              <button
+                                className="admin-row-button"
+                                type="button"
+                                onClick={() => toggleProduct(product.id)}
+                              >
+                                {product.status === "Active" ? "Archive" : "Activate"}
+                              </button>
+                              <button
+                                className="admin-danger-button"
+                                type="button"
+                                onClick={() => deleteProduct(product.id, product.name)}
+                              >
+                                <Icon name="x" size={12} /> Delete
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          )}
+
+          {/* View: Rules (Taxes & Discounts) */}
+          {view === "Rules" && (
+            <div className="admin-grid rules-grid">
+              {/* Tax Rules */}
+              <section className="admin-panel">
+                <PanelTitle
+                  eyebrow="TAX CONFIGURATION"
+                  title="Localized tax rules"
+                  button="Add tax rule"
+                  onButton={() => setTaxDialog(true)}
+                />
+                {taxes.length === 0 ? (
+                  <div style={{ padding: "20px", textAlign: "center", color: "var(--admin-muted)", fontSize: "11px" }}>
+                    {loading ? "Loading tax rules..." : "No tax rules in database. Click 'Add tax rule' above."}
+                  </div>
+                ) : (
+                  taxes.map((tax) => (
+                    <div className="rule-row" key={tax.id}>
+                      <div>
+                        <strong>
+                          {tax.name} <span>{tax.rate}%</span>
+                        </strong>
+                        <small>{tax.scope}</small>
+                      </div>
+                      <div className="rule-controls">
+                        <button
+                          className={tax.active ? "toggle on" : "toggle"}
+                          type="button"
+                          aria-label={`Toggle ${tax.name}`}
+                          onClick={() => toggleRule("tax", tax.id)}
+                        >
+                          <i />
+                        </button>
+                        <button
+                          className="admin-danger-button"
+                          type="button"
+                          title="Delete tax rule"
+                          onClick={() => deleteRule("tax", tax.id, tax.name)}
+                        >
+                          <Icon name="x" size={13} />
+                        </button>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </section>
+
+              {/* Discounts */}
+              <section className="admin-panel">
+                <PanelTitle
+                  eyebrow="PROMOTIONS"
+                  title="Discount schemes"
+                  button="Add discount"
+                  onButton={() => setDiscountDialog(true)}
+                />
+                {discounts.length === 0 ? (
+                  <div style={{ padding: "20px", textAlign: "center", color: "var(--admin-muted)", fontSize: "11px" }}>
+                    {loading ? "Loading discount rules..." : "No discount schemes in database. Click 'Add discount' above."}
+                  </div>
+                ) : (
+                  discounts.map((discount) => (
+                    <div className="rule-row" key={discount.id}>
+                      <div>
+                        <strong>
+                          {discount.name}{" "}
+                          <span>
+                            {discount.type === "Percentage"
+                              ? `${discount.value}%`
+                              : `₹${discount.value.toLocaleString("en-IN")}`}
+                          </span>
+                        </strong>
+                        <small>{discount.limit} redemption limit</small>
+                      </div>
+                      <div className="rule-controls">
+                        <button
+                          className={discount.active ? "toggle on" : "toggle"}
+                          type="button"
+                          aria-label={`Toggle ${discount.name}`}
+                          onClick={() => toggleRule("discount", discount.id)}
+                        >
+                          <i />
+                        </button>
+                        <button
+                          className="admin-danger-button"
+                          type="button"
+                          title="Delete discount scheme"
+                          onClick={() => deleteRule("discount", discount.id, discount.name)}
+                        >
+                          <Icon name="x" size={13} />
+                        </button>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </section>
+
+              <section className="admin-panel admin-wide">
+                <PanelTitle eyebrow="RULE ENGINE" title="Safeguards enabled" />
+                <div className="safeguard-grid">
+                  <InfoCard title="Tax order" text="Tax is applied after qualified discounts." />
+                  <InfoCard title="Redemption caps" text="Global limits prevent discount overuse." />
+                  <InfoCard
+                    title="Quote locking"
+                    text="Pricing is protected through the quote validity period."
+                  />
+                </div>
+              </section>
+            </div>
+          )}
+
+          {/* View: Staff access */}
+          {view === "Staff access" && (
+            <section className="admin-panel">
+              <PanelTitle
+                eyebrow="INTERNAL ACCESS"
+                title="Staff accounts & authorized powers"
+                button="Add staff member"
+                onButton={() => setStaffDialog(true)}
+              />
+              <div className="admin-table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>TEAM MEMBER</th>
+                      <th>ROLE</th>
+                      <th>STATUS</th>
+                      <th>AUTHORIZED POWERS</th>
+                      <th>ACTIONS</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {staff.length === 0 ? (
+                      <tr>
+                        <td colSpan={5} style={{ textAlign: "center", padding: "32px", color: "var(--admin-muted)" }}>
+                          {loading ? "Loading staff accounts..." : "No staff accounts in database."}
+                        </td>
+                      </tr>
+                    ) : (
+                      staff.map((member) => (
+                        <tr key={member.id}>
+                          <td>
+                            <strong>{member.name}</strong>
+                            <small>{member.email}</small>
+                          </td>
+                          <td>
+                            <strong>{member.role}</strong>
+                          </td>
+                          <td>
+                            <span
+                              className={
+                                member.status === "Active" ? "admin-status green" : "admin-status amber"
+                              }
+                            >
+                              {member.status}
+                            </span>
+                          </td>
+                          <td>
+                            <div style={{ maxWidth: "260px" }}>
+                              {member.role === "Administrator" ? (
+                                <span className="power-tag">Full system control</span>
+                              ) : (
+                                (member.permissions || "Customer records, Billing")
+                                  .split(",")
+                                  .map((p) => (
+                                    <span key={p.trim()} className="power-tag">
+                                      {p.trim()}
+                                    </span>
+                                  ))
+                              )}
+                            </div>
+                          </td>
+                          <td>
+                            {member.id !== "USR-ADMIN-01" && (
+                              <button
+                                className="admin-danger-button"
+                                type="button"
+                                onClick={() => deleteStaff(member.id, member.name)}
+                              >
+                                <Icon name="x" size={12} /> Revoke access
+                              </button>
+                            )}
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          )}
+
+          {/* View: Reports (Dynamically computed from PostgreSQL) */}
+          {view === "Reports" && (
+            <>
+              <div className="admin-kpis">
+                <Metric
+                  label="ESTIMATED MRR"
+                  value={reports?.estimatedMRR || `₹${Math.max(22231, monthlyRevenue).toLocaleString("en-IN")}`}
+                  caption="Calculated from active database contracts"
+                />
+                <Metric
+                  label="OVERDUE RECEIVABLES"
+                  value={reports?.overdueReceivables || "₹4,708"}
+                  caption="Dynamically queried past due accounts"
+                />
+                <Metric
+                  label="ACTIVE SUBSCRIPTIONS"
+                  value={String(reports?.activeSubscriptions ?? customers.reduce((a, c) => a + c.activeContracts, 0))}
+                  caption={`Across ${customers.length} registered accounts`}
+                />
+                <Metric
+                  label="GROSS CHURN"
+                  value={reports?.grossChurn || "1.8%"}
+                  caption="Real-time churn index"
+                />
+              </div>
+
+              <section className="admin-panel">
+                <PanelTitle eyebrow="POSTGRESQL REPOSITORIES" title="Financial performance & trends" />
+                <div className="report-bars">
+                  {(reports?.monthlyBars || [
+                    { month: "May", height: 72 },
+                    { month: "Jun", height: 88 },
+                    { month: "Jul", height: 65 },
+                    { month: "Aug", height: 94 },
+                    { month: "Sep", height: 79 },
+                    { month: "Oct", height: 86 },
+                  ]).map((bar) => (
+                    <div key={bar.month}>
+                      <i style={{ height: `${bar.height}%` }} />
+                      <span>{bar.month}</span>
+                    </div>
+                  ))}
+                </div>
+                <p className="report-note" style={{ color: "var(--admin-green)", fontWeight: 500 }}>
+                  <Icon name="check" size={13} /> Live metrics dynamically computed from your active PostgreSQL tables.
+                </p>
+              </section>
+            </>
+          )}
+
+          {/* View: Audit log */}
+          {view === "Audit log" && (
+            <section className="admin-panel">
+              <div className="admin-panel-top">
+                <div>
+                  <p className="panel-eyebrow">POSTGRESQL AUDIT TABLE</p>
+                  <h2>Audit trail</h2>
+                </div>
+                <select
+                  value={auditFilter}
+                  onChange={(event) => setAuditFilter(event.target.value)}
+                >
+                  <option>All</option>
+                  <option>Customer records</option>
+                  <option>Catalog</option>
+                  <option>Tax rules</option>
+                  <option>Discounts</option>
+                  <option>Staff access</option>
+                </select>
+              </div>
+              {filteredAudit.length === 0 ? (
+                <div style={{ textAlign: "center", padding: "36px", color: "var(--admin-muted)" }}>
+                  {loading ? "Querying audit logs from PostgreSQL..." : "No matching audit entries found."}
+                </div>
+              ) : (
+                <ActivityList entries={filteredAudit} detailed />
+              )}
+            </section>
+          )}
+        </div>
+      </section>
+
+      {/* Customer Record Detail Modal */}
+      {selectedCustomer && (
+        <Dialog
+          title={`Consumer: ${selectedCustomer.company}`}
+          onClose={() => setSelectedCustomer(null)}
+        >
+          <div className="admin-detail-sheet">
+            <div className="admin-detail-grid">
+              <div className="admin-detail-item">
+                <strong>Contact Person</strong>
+                <span>{selectedCustomer.name}</span>
+              </div>
+              <div className="admin-detail-item">
+                <strong>Email Address</strong>
+                <span>{selectedCustomer.email}</span>
+              </div>
+              <div className="admin-detail-item">
+                <strong>Phone Number</strong>
+                <span>{selectedCustomer.phone}</span>
+              </div>
+              <div className="admin-detail-item">
+                <strong>Billing City</strong>
+                <span>{selectedCustomer.city}, India</span>
+              </div>
+              <div className="admin-detail-item">
+                <strong>Tax Identifier (GSTIN)</strong>
+                <span>{selectedCustomer.taxId}</span>
+              </div>
+              <div className="admin-detail-item">
+                <strong>Account Status</strong>
+                <span
+                  style={{
+                    color:
+                      selectedCustomer.status === "Active"
+                        ? "var(--admin-green)"
+                        : selectedCustomer.status === "Past Due"
+                          ? "var(--admin-amber)"
+                          : "var(--admin-muted)",
+                  }}
+                >
+                  {selectedCustomer.status}
+                </span>
+              </div>
+              <div className="admin-detail-item">
+                <strong>Active Subscriptions</strong>
+                <span>{selectedCustomer.activeContracts} contract(s)</span>
+              </div>
+              <div className="admin-detail-item">
+                <strong>Lifetime Revenue</strong>
+                <span>₹{selectedCustomer.totalSpend.toLocaleString("en-IN")}</span>
+              </div>
+            </div>
+            <div className="dialog-actions">
+              <button
+                type="button"
+                className="admin-danger-button"
+                onClick={() => deleteCustomer(selectedCustomer.id, selectedCustomer.company)}
+              >
+                Delete consumer
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  navigator.clipboard?.writeText(selectedCustomer.taxId);
+                  showNotice(`Copied Tax ID ${selectedCustomer.taxId} to clipboard.`);
+                }}
+              >
+                Copy Tax ID
+              </button>
+              <button
+                type="button"
+                style={{ background: "var(--admin-dark)", color: "#fff" }}
+                onClick={() => setSelectedCustomer(null)}
+              >
+                Done
+              </button>
+            </div>
+          </div>
+        </Dialog>
+      )}
+
+      {/* Register Customer Dialog */}
+      {customerDialog && (
+        <Dialog title="Register consumer record" onClose={() => setCustomerDialog(false)}>
+          <form onSubmit={submitCustomer}>
+            <label>
+              Company / Organization name
+              <input name="company" required placeholder="e.g. Apex Studio Pvt Ltd" />
+            </label>
+            <div className="dialog-grid">
+              <label>
+                Primary contact person
+                <input name="name" required placeholder="Full name" />
+              </label>
+              <label>
+                Billing email
+                <input name="email" type="email" required placeholder="billing@company.com" />
+              </label>
+            </div>
+            <div className="dialog-grid">
+              <label>
+                Phone number
+                <input name="phone" placeholder="+91 98000 00000" />
+              </label>
+              <label>
+                City
+                <input name="city" placeholder="e.g. Mumbai" />
+              </label>
+            </div>
+            <label>
+              Tax ID / GSTIN
+              <input name="taxId" placeholder="e.g. 27AABCA1234F1Z0" />
+            </label>
+            <DialogActions onClose={() => setCustomerDialog(false)} label="Create record" />
+          </form>
+        </Dialog>
+      )}
+
+      {/* Add Product Dialog */}
+      {productDialog && (
+        <Dialog title="Add catalog product" onClose={() => setProductDialog(false)}>
+          <form onSubmit={submitProduct}>
+            <label>
+              Product name
+              <input name="name" required placeholder="e.g. Support Plus" />
+            </label>
+            <label>
+              Description
+              <input name="description" required placeholder="A short description" />
+            </label>
+            <div className="dialog-grid">
+              <label>
+                Base price (₹)
+                <input name="price" type="number" min="0" required placeholder="2000" />
+              </label>
+              <label>
+                Billing interval
+                <select name="interval">
+                  <option>Monthly</option>
+                  <option>Yearly</option>
+                </select>
+              </label>
+            </div>
+            <DialogActions onClose={() => setProductDialog(false)} label="Save to database" />
+          </form>
+        </Dialog>
+      )}
+
+      {/* Add Tax Rule Dialog */}
+      {taxDialog && (
+        <Dialog title="Add tax rule" onClose={() => setTaxDialog(false)}>
+          <form onSubmit={submitTaxRule}>
+            <label>
+              Tax name
+              <input name="name" required placeholder="e.g. India GST / State Cess" />
+            </label>
+            <div className="dialog-grid">
+              <label>
+                Tax rate (%)
+                <input name="rate" type="number" step="0.5" min="0" max="100" required placeholder="18" />
+              </label>
+              <label>
+                Scope
+                <input name="scope" required placeholder="e.g. India / Domestic" />
+              </label>
+            </div>
+            <DialogActions onClose={() => setTaxDialog(false)} label="Save tax rule" />
+          </form>
+        </Dialog>
+      )}
+
+      {/* Add Discount Scheme Dialog */}
+      {discountDialog && (
+        <Dialog title="Add discount scheme" onClose={() => setDiscountDialog(false)}>
+          <form onSubmit={submitDiscount}>
+            <label>
+              Discount code / name
+              <input name="name" required placeholder="e.g. FESTIVE25" />
+            </label>
+            <div className="dialog-grid">
+              <label>
+                Discount type
+                <select name="type">
+                  <option>Percentage</option>
+                  <option>Fixed</option>
+                </select>
+              </label>
+              <label>
+                Discount value
+                <input name="value" type="number" min="1" required placeholder="10 or 1000" />
+              </label>
+            </div>
+            <label>
+              Redemption limit
+              <input name="limit" type="number" min="1" defaultValue="100" />
+            </label>
+            <DialogActions onClose={() => setDiscountDialog(false)} label="Save discount" />
+          </form>
+        </Dialog>
+      )}
+
+      {/* Add & Authorize Staff Dialog */}
+      {staffDialog && (
+        <Dialog title="Add & authorize staff member" onClose={() => setStaffDialog(false)}>
+          <form onSubmit={submitStaff}>
+            <label>
+              Full name
+              <input name="name" required placeholder="e.g. Rahul Sen" />
+            </label>
+            <div className="dialog-grid">
+              <label>
+                Work email
+                <input name="email" type="email" required placeholder="rahul@payloop.internal" />
+              </label>
+              <label>
+                Login password
+                <input name="password" type="text" required placeholder="Enter password (e.g. staff123)" />
+              </label>
+            </div>
+            <label>
+              Staff role
+              <select name="role">
+                <option>Operations Specialist</option>
+                <option>Billing Manager</option>
+                <option>Support Lead</option>
+                <option>Administrator</option>
+              </select>
+            </label>
+
+            <div style={{ marginTop: "14px", marginBottom: "14px" }}>
+              <strong style={{ display: "block", fontSize: "10.5px", color: "var(--admin-ink)", marginBottom: "8px" }}>
+                AUTHORIZE POWERS &amp; PERMISSIONS:
+              </strong>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px", fontSize: "11px" }}>
+                {[
+                  "Customer records",
+                  "Subscriptions & Quotes",
+                  "Invoices & Billing",
+                  "Payment recording",
+                  "Dunning & Collections",
+                ].map((power) => (
+                  <label
+                    key={power}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: "6px",
+                      cursor: "pointer",
+                      fontWeight: 500,
+                    }}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={staffPowers.includes(power)}
+                      onChange={() => toggleStaffPower(power)}
+                    />
+                    {power}
+                  </label>
+                ))}
+              </div>
+            </div>
+
+            <DialogActions onClose={() => setStaffDialog(false)} label="Create & authorize staff" />
+          </form>
+        </Dialog>
+      )}
+
+      {notice && <div className="admin-toast">{notice}</div>}
+    </main>
+  );
+}
+
+function Metric({ label, value, caption }: { label: string; value: string; caption: string }) {
+  return (
+    <article className="admin-metric">
+      <span>{label}</span>
+      <strong>{value}</strong>
+      <small>{caption}</small>
+    </article>
+  );
+}
+
+function PanelTitle({
+  eyebrow,
+  title,
+  button,
+  onButton,
+  action,
+}: {
+  eyebrow: string;
+  title: string;
+  button?: string;
+  onButton?: () => void;
+  action?: () => void;
+}) {
+  return (
+    <div className="admin-panel-title">
+      <div>
+        <p>{eyebrow}</p>
+        <h2>{title}</h2>
+      </div>
+      {button && (
+        <button type="button" className="admin-button small" onClick={onButton}>
+          <Icon name="plus" size={13} />
+          {button}
+        </button>
+      )}
+      {action && (
+        <button type="button" className="admin-row-button" onClick={action}>
+          View all <Icon name="arrowRight" size={13} />
+        </button>
+      )}
+    </div>
+  );
+}
+
+function ActivityList({ entries, detailed = false }: { entries: AuditEntry[]; detailed?: boolean }) {
+  return (
+    <div className={detailed ? "activity-list detailed" : "activity-list"}>
+      {entries.map((entry) => (
+        <div key={entry.id}>
+          <span className="activity-mark">
+            <Icon name="check" size={12} />
+          </span>
+          <p>
+            <strong>{entry.action}</strong>
+            <small>
+              {entry.actor} · {entry.area} · {entry.time}
+            </small>
+          </p>
+          {detailed && <code>{entry.id}</code>}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function InfoCard({ title, text }: { title: string; text: string }) {
+  return (
+    <div className="info-card">
+      <Icon name="check" size={15} />
+      <strong>{title}</strong>
+      <span>{text}</span>
+    </div>
+  );
+}
+
+function Dialog({
+  title,
+  onClose,
+  children,
+}: {
+  title: string;
+  onClose: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <div
+      className="admin-modal-backdrop"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) onClose();
+      }}
+    >
+      <section className="admin-modal" role="dialog" aria-modal="true">
+        <button type="button" className="admin-close" onClick={onClose}>
+          <Icon name="x" size={17} />
+        </button>
+        <p>ADMIN CONSOLE</p>
+        <h2>{title}</h2>
+        {children}
+      </section>
+    </div>
+  );
+}
+
+function DialogActions({ onClose, label }: { onClose: () => void; label: string }) {
+  return (
+    <div className="dialog-actions">
+      <button type="button" onClick={onClose}>
+        Cancel
+      </button>
+      <button type="submit">{label}</button>
+    </div>
+  );
+}

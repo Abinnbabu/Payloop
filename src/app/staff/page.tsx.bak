@@ -1,0 +1,24 @@
+import type { Metadata } from "next";
+import { redirect } from "next/navigation";
+import { loadSessionUser } from "@/lib/auth";
+import { StaffClient } from "./staff-client";
+
+export const metadata: Metadata = {
+  title: "Staff Workspace — Payloop",
+  description:
+    "Daily operations dashboard for Payloop staff: customer management, quote generation, subscriptions lifecycle, invoicing, and payment reconciliation.",
+};
+
+export default async function StaffPage() {
+  const user = await loadSessionUser();
+
+  if (!user) {
+    redirect("/login?next=/staff");
+  }
+
+  if (user.role === "Customer") {
+    redirect("/dashboard");
+  }
+
+  return <StaffClient user={user} />;
+}

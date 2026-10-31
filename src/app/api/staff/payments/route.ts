@@ -1,0 +1,100 @@
+import { NextResponse } from "next/server";
+import { query, initDb } from "@/lib/db";
+import { requireRole, authErrorResponse } from "@/lib/auth";
+import { newAuditId, newPaymentId } from "@/lib/ids";
+
+export const dynamic = "force-dynamic";
+const ALLOWED = ["Administrator", "Operations Specialist", "Billing Manager"] as const;
+
+export async function GET() {
+  try {
+    await requireRole([...ALLOWED]);
+    await initDb();
+    const result = await query(`
+      SELECT id, invoice_id AS "invoiceId", customer_name AS "customerName",
+             method, amount, TO_CHAR(date, 'DD Mon YYYY') AS date,
+             transaction_ref AS "transactionRef", notes
+      FROM payments
+      ORDER BY created_at DESC;
+    `);
+    return NextResponse.json({ success: true, payments: result.rows });
+  } catch (err) {
+    return authErrorResponse(err);
+  }
+}
+
+export async function POST(request: Request) {
+  try {
+    const user = await requireRole([...ALLOWED]);
+    const { invoiceId, method, amount, transactionRef, notes } = await request.json();
+    if (!invoiceId || !amount || !transactionRef) {
+      return NextResponse.json(
+        { success: false, error: "invoiceId, amount, transactionRef required." },
+        { status: 400 }
+      );
+    }
+    await initDb();
+    const invRes = await query<{
+      total: number; customer_name: string; status: string; subscription_id: string | null;
+    }>(
+      `SELECT total, customer_name, status, subscription_id
+       FROM invoices WHERE id = $1 FOR UPDATE;`,
+      [invoiceId]
+    );
+    if (invRes.rows.length === 0) {
+      return NextResponse.json(
+        { success: false, error: "Invoice not found." },
+        { status: 404 }
+      );
+    }
+    const invoice = invRes.rows[0];
+    if (invoice.status === "Paid") {
+      return NextResponse.json(
+        { success: false, error: "Invoice already paid." },
+        { status: 409 }
+      );
+    }
+    if (Number(amount) !== Number(invoice.total)) {
+      return NextResponse.json(
+        { success: false, error: `Payment must equal the outstanding total of \u20B9${invoice.total}.` },
+        { status: 400 }
+      );
+    }
+    const paymentId = newPaymentId();
+    const today = new Date().toISOString().slice(0, 10);
+    await query(
+      `INSERT INTO payments
+         (id, invoice_id, customer_name, method, amount, date, transaction_ref, notes)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8);`,
+      [
+        paymentId, invoiceId, invoice.customer_name,
+        method ?? "Bank Transfer (NEFT)", Number(amount),
+        today, String(transactionRef), notes ?? "",
+      ]
+    );
+    await query(
+      `UPDATE invoices SET status = 'Paid', days_overdue = NULL WHERE id = $1;`,
+      [invoiceId]
+    );
+    if (invoice.subscription_id) {
+      await query(
+        `UPDATE subscriptions
+         SET status = 'Active', dunning_attempts = 0
+         WHERE id = $1 AND status = 'Past Due';`,
+        [invoice.subscription_id]
+      );
+    }
+    await query(
+      `INSERT INTO audit_logs (id, action, actor, area)
+       VALUES ($1, $2, $3, 'Invoicing');`,
+      [
+        newAuditId(),
+        `Recorded payment ${paymentId} (\u20B9${invoice.total}) for ${invoiceId}`,
+        user.name,
+      ]
+    );
+    return NextResponse.json({ success: true, paymentId });
+  } catch (err) {
+    return authErrorResponse(err);
+  }
+}

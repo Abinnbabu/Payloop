@@ -1,0 +1,144 @@
+import { NextResponse } from "next/server";
+import { query, initDb } from "@/lib/db";
+import { requireRole, authErrorResponse } from "@/lib/auth";
+import { newAuditId, newSubId } from "@/lib/ids";
+
+export const dynamic = "force-dynamic";
+const ALLOWED = ["Administrator", "Operations Specialist"] as const;
+const STATUSES = ["Draft","Quotation","Confirmed","Active","Paused","Past Due","Closed"] as const;
+type Status = (typeof STATUSES)[number];
+
+const TRANSITIONS: Record<Status, Status[]> = {
+  Draft: ["Quotation", "Closed"],
+  Quotation: ["Confirmed", "Closed"],
+  Confirmed: ["Active", "Closed"],
+  Active: ["Paused", "Past Due", "Closed"],
+  Paused: ["Active", "Closed"],
+  "Past Due": ["Active", "Closed"],
+  Closed: [],
+};
+
+export async function GET() {
+  try {
+    await requireRole([...ALLOWED, "Billing Manager"]);
+    await initDb();
+    const result = await query(`
+      SELECT s.id, s.customer_id AS "customerId",
+             c.company AS "customerName", c.name AS "customerContact",
+             s.plan_name AS "planName", s.billing_interval AS "billingInterval",
+             s.variant_name AS "variantName", s.variant_price AS "variantPrice",
+             s.addons, s.base_price AS "basePrice", s.tax_rate::float AS "taxRate",
+             s.discount_amount AS "discountAmount", s.total_cents AS "totalCents",
+             s.status,
+             TO_CHAR(s.start_date, 'DD Mon YYYY') AS "startDate",
+             TO_CHAR(s.expiry_date, 'DD Mon YYYY') AS "expiryDate",
+             s.payment_terms AS "paymentTerms",
+             s.icon_letter AS "iconLetter", s.icon_theme AS "iconTheme",
+             s.dunning_attempts AS "dunningAttempts"
+      FROM subscriptions s
+      JOIN customers c ON c.id = s.customer_id
+      ORDER BY s.created_at DESC;
+    `);
+    return NextResponse.json({ success: true, subscriptions: result.rows });
+  } catch (err) {
+    return authErrorResponse(err);
+  }
+}
+
+export async function POST(request: Request) {
+  try {
+    const user = await requireRole([...ALLOWED]);
+    const body = await request.json();
+    const {
+      customerId, planName, billingInterval, variantName, variantPrice, addons,
+      basePrice, taxRate, discountAmount, totalCents, status,
+      startDate, expiryDate, paymentTerms, iconLetter, iconTheme,
+    } = body;
+    if (!customerId || !planName || !startDate || !expiryDate) {
+      return NextResponse.json(
+        { success: false, error: "customerId, planName, startDate, expiryDate required." },
+        { status: 400 }
+      );
+    }
+    if (!STATUSES.includes(status)) {
+      return NextResponse.json(
+        { success: false, error: `status must be one of ${STATUSES.join(", ")}` },
+        { status: 400 }
+      );
+    }
+    await initDb();
+    const id = newSubId();
+    const result = await query(
+      `INSERT INTO subscriptions
+         (id, customer_id, plan_name, billing_interval, variant_name, variant_price,
+          addons, base_price, tax_rate, discount_amount, total_cents, status,
+          start_date, expiry_date, payment_terms, icon_letter, icon_theme)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+       RETURNING id, status;`,
+      [
+        id, customerId, String(planName), billingInterval ?? "Monthly",
+        variantName ?? "Standard", Number(variantPrice) || 0,
+        Array.isArray(addons) ? addons : [], Number(basePrice) || 0,
+        Number(taxRate ?? 0.18), Number(discountAmount) || 0,
+        Number(totalCents) || 0, status, startDate, expiryDate,
+        paymentTerms ?? "Net 30", String(iconLetter ?? "P").slice(0, 1),
+        iconTheme ?? "purple",
+      ]
+    );
+    await query(
+      `INSERT INTO audit_logs (id, action, actor, area)
+       VALUES ($1, $2, $3, 'Subscriptions');`,
+      [newAuditId(), `Created ${status.toLowerCase()} ${id}`, user.name]
+    );
+    return NextResponse.json({ success: true, subscription: result.rows[0] });
+  } catch (err) {
+    return authErrorResponse(err);
+  }
+}
+
+export async function PATCH(request: Request) {
+  try {
+    const user = await requireRole([...ALLOWED]);
+    const { id, status } = await request.json();
+    if (!id || !STATUSES.includes(status)) {
+      return NextResponse.json(
+        { success: false, error: "id and valid status required." },
+        { status: 400 }
+      );
+    }
+    await initDb();
+    const current = await query<{ status: string }>(
+      "SELECT status FROM subscriptions WHERE id = $1;",
+      [id]
+    );
+    if (current.rows.length === 0) {
+      return NextResponse.json(
+        { success: false, error: "Subscription not found." },
+        { status: 404 }
+      );
+    }
+    const from = current.rows[0].status as Status;
+    if (!TRANSITIONS[from]?.includes(status as Status)) {
+      return NextResponse.json(
+        { success: false, error: `Invalid transition ${from} -> ${status}` },
+        { status: 409 }
+      );
+    }
+    const result = await query(
+      `UPDATE subscriptions
+       SET status = $1,
+           dunning_attempts = CASE WHEN $1 = 'Active' THEN 0 ELSE dunning_attempts END
+       WHERE id = $2
+       RETURNING id, status;`,
+      [status, id]
+    );
+    await query(
+      `INSERT INTO audit_logs (id, action, actor, area)
+       VALUES ($1, $2, $3, 'Subscriptions');`,
+      [newAuditId(), `Moved ${id} ${from} -> ${status}`, user.name]
+    );
+    return NextResponse.json({ success: true, subscription: result.rows[0] });
+  } catch (err) {
+    return authErrorResponse(err);
+  }
+}

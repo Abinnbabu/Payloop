@@ -1,0 +1,25 @@
+import { NextResponse } from "next/server";
+import type { NextRequest } from "next/server";
+
+const COOKIE_NAME = "payloop_session";
+const PROTECTED = ["/admin", "/staff", "/dashboard"] as const;
+
+export function middleware(request: NextRequest) {
+  const { pathname } = request.nextUrl;
+  const isProtected = PROTECTED.some(
+    (prefix) => pathname === prefix || pathname.startsWith(prefix + "/")
+  );
+  if (!isProtected) return NextResponse.next();
+
+  const token = request.cookies.get(COOKIE_NAME)?.value;
+  if (!token) {
+    const loginUrl = new URL("/login", request.url);
+    loginUrl.searchParams.set("next", pathname);
+    return NextResponse.redirect(loginUrl);
+  }
+  return NextResponse.next();
+}
+
+export const config = {
+  matcher: ["/admin/:path*", "/staff/:path*", "/dashboard/:path*"],
+};

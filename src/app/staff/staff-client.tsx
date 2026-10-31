@@ -1,11 +1,13 @@
+export type StaffClientProps = { user: SessionUser };
+
 "use client";
 
 import Link from "next/link";
 import { useState, useMemo, useEffect, type FormEvent } from "react";
 import { Icon } from "@/components/icon";
+import type { SessionUser } from "@/lib/types";
 // @ts-ignore Next.js resolves global CSS imports, while the project TypeScript config may not declare them.
 import "./staff.css";
-
 // --- Types ---
 
 export type LifecycleStatus =
@@ -483,7 +485,7 @@ type TabId =
   | "Overdue"
   | "Templates";
 
-export function StaffClient() {
+export function StaffClient({ user }: { user: SessionUser }) {
   const [activeTab, setActiveTab] = useState<TabId>("Overview");
   const [menuOpen, setMenuOpen] = useState(false);
   const [notice, setNotice] = useState("");
@@ -1023,10 +1025,10 @@ export function StaffClient() {
           </div>
 
           <div className="sidebar-account">
-            <span className="sidebar-account-avatar">SR</span>
+            <span className="sidebar-account-avatar">{staffInitials}</span>
             <div className="sidebar-account-copy">
-              <strong>Siddharth Rao</strong>
-              <small>Operations Specialist</small>
+              <strong>{user.name}</strong>
+              <small>{user.role}</small>
             </div>
           </div>
         </div>
@@ -1117,7 +1119,7 @@ export function StaffClient() {
           <div className="welcome-row">
             <div>
               <p className="welcome-date">STAFF OPERATIONS CONSOLE · SATURDAY, OCTOBER 31, 2026</p>
-              <h1>Good morning, Siddharth <span className="wave">✳</span></h1>
+              <h1>Good morning, {(user.name ?? user.email).split(" ")[0]} <span className="wave">✳</span></h1>
               <p className="welcome-subtitle">
                 Here is the live operational health across accounts, lifecycle states, and collections.
               </p>

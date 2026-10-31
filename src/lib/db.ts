@@ -1,23 +1,27 @@
 import { Pool, type QueryResult, type QueryResultRow } from "pg";
+import { hashPassword, isHashed } from "@/lib/crypto";
 
 let pool: Pool | null = null;
 let isInitialized = false;
+let seedInFlight: Promise<boolean> | null = null;
 
 export function getPool(): Pool {
   if (!pool) {
     const connectionString =
-      process.env.DATABASE_URL || "postgresql://postgres:postgres@localhost:5432/payloop";
-
+      process.env.DATABASE_URL ||
+      "postgresql://postgres:postgres@localhost:5432/payloop";
     pool = new Pool({
       connectionString,
-      ssl: process.env.DATABASE_SSL === "true" ? { rejectUnauthorized: false } : undefined,
+      ssl:
+        process.env.DATABASE_SSL === "true"
+          ? { rejectUnauthorized: false }
+          : undefined,
       max: 10,
-      idleTimeoutMillis: 30000,
-      connectionTimeoutMillis: 3000,
+      idleTimeoutMillis: 30_000,
+      connectionTimeoutMillis: 3_000,
     });
-
     pool.on("error", (err) => {
-      console.warn("[PostgreSQL] Unexpected pool error (database might be offline):", err.message);
+      console.warn("[PostgreSQL] Pool error:", err.message);
     });
   }
   return pool;
@@ -27,177 +31,317 @@ export async function query<T extends QueryResultRow = any>(
   text: string,
   params?: any[]
 ): Promise<QueryResult<T>> {
-  const p = getPool();
-  return p.query<T>(text, params);
+  return getPool().query<T>(text, params);
 }
 
-/**
- * Initializes the PostgreSQL schema and seeds initial data if missing.
- * Handles database connectivity issues gracefully.
- */
 export async function initDb(): Promise<boolean> {
   if (isInitialized) return true;
+  if (seedInFlight) return seedInFlight;
 
-  try {
-    const p = getPool();
-    // Test connectivity
-    await p.query("SELECT 1;");
+  seedInFlight = (async () => {
+    try {
+      const p = getPool();
+      await p.query("SELECT 1;");
 
-    // Create tables
-    await p.query(`
-      CREATE TABLE IF NOT EXISTS users (
-        id VARCHAR(50) PRIMARY KEY,
-        name VARCHAR(150) NOT NULL,
-        email VARCHAR(255) UNIQUE NOT NULL,
-        password VARCHAR(255) NOT NULL,
-        role VARCHAR(50) NOT NULL DEFAULT 'Customer',
-        status VARCHAR(50) NOT NULL DEFAULT 'Active',
-        permissions TEXT,
-        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-      );
-
-      ALTER TABLE users ADD COLUMN IF NOT EXISTS permissions TEXT;
-
-      CREATE TABLE IF NOT EXISTS products (
-        id VARCHAR(50) PRIMARY KEY,
-        name VARCHAR(150) NOT NULL,
-        description TEXT,
-        price INTEGER NOT NULL,
-        interval VARCHAR(50) NOT NULL DEFAULT 'Monthly',
-        status VARCHAR(50) NOT NULL DEFAULT 'Active',
-        variants INTEGER NOT NULL DEFAULT 1,
-        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-      );
-
-      CREATE TABLE IF NOT EXISTS customers (
-        id VARCHAR(50) PRIMARY KEY,
-        company VARCHAR(200) NOT NULL,
-        name VARCHAR(150) NOT NULL,
-        email VARCHAR(255) NOT NULL,
-        phone VARCHAR(50),
-        city VARCHAR(100),
-        tax_id VARCHAR(50),
-        status VARCHAR(50) NOT NULL DEFAULT 'Active',
-        active_contracts INTEGER NOT NULL DEFAULT 0,
-        total_spend INTEGER NOT NULL DEFAULT 0,
-        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-      );
-
-      CREATE TABLE IF NOT EXISTS discounts (
-        id VARCHAR(50) PRIMARY KEY,
-        name VARCHAR(100) NOT NULL,
-        type VARCHAR(50) NOT NULL,
-        value INTEGER NOT NULL,
-        redemption_limit INTEGER NOT NULL DEFAULT 100,
-        active BOOLEAN NOT NULL DEFAULT TRUE,
-        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-      );
-
-      CREATE TABLE IF NOT EXISTS taxes (
-        id VARCHAR(50) PRIMARY KEY,
-        name VARCHAR(100) NOT NULL,
-        rate INTEGER NOT NULL,
-        scope VARCHAR(150) NOT NULL,
-        active BOOLEAN NOT NULL DEFAULT TRUE,
-        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-      );
-
-      CREATE TABLE IF NOT EXISTS audit_logs (
-        id VARCHAR(50) PRIMARY KEY,
-        action TEXT NOT NULL,
-        actor VARCHAR(150) NOT NULL,
-        area VARCHAR(100) NOT NULL,
-        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-      );
-    `);
-
-    // Seed Admin User
-    const adminEmail = process.env.ADMIN_EMAIL || "admin@gmail.com";
-    const adminPassword = process.env.ADMIN_PASSWORD || "admin";
-    await p.query(
-      `INSERT INTO users (id, name, email, password, role, status, permissions)
-       VALUES ('USR-ADMIN-01', 'Priya Nair', $1, $2, 'Administrator', 'Active', 'All')
-       ON CONFLICT (email) DO UPDATE SET password = $2, role = 'Administrator', permissions = 'All';`,
-      [adminEmail, adminPassword]
-    );
-
-    // Seed initial staff members if not present
-    const staffEmail = process.env.STAFF_EMAIL || "staff@payloop.internal";
-    const staffPassword = process.env.STAFF_PASSWORD || "staff";
-    await p.query(
-      `INSERT INTO users (id, name, email, password, role, status, permissions)
-       VALUES 
-       ('USR-STAFF-01', 'Siddharth Rao', $1, $2, 'Operations Specialist', 'Active', 'Customer records, Subscriptions & Quotes, Invoices & Billing'),
-       ('USR-STAFF-02', 'Maya Joseph', 'maya.joseph@payloop.internal', 'staff', 'Billing Manager', 'Active', 'Invoices & Billing, Payment recording, Dunning & Collections')
-       ON CONFLICT (email) DO NOTHING;`,
-      [staffEmail, staffPassword]
-    );
-
-    // Seed Products if table empty
-    const prodCount = await p.query("SELECT COUNT(*) FROM products;");
-    if (parseInt(prodCount.rows[0].count, 10) === 0) {
       await p.query(`
-        INSERT INTO products (id, name, description, price, interval, status, variants) VALUES
-        ('PROD-01', 'Studio Workspace', 'Workspace management for creative teams', 3500, 'Monthly', 'Active', 2),
-        ('PROD-02', 'Flow Analytics', 'Product and engagement analytics', 1180, 'Monthly', 'Active', 1),
-        ('PROD-03', 'Cloud Storage Team', 'Managed storage for growing teams', 2000, 'Monthly', 'Active', 1),
-        ('PROD-04', 'Enterprise Suite', 'Custom enterprise subscription package', 160000, 'Yearly', 'Archived', 3);
-      `);
-    }
+        CREATE TABLE IF NOT EXISTS users (
+          id VARCHAR(50) PRIMARY KEY,
+          name VARCHAR(150) NOT NULL,
+          email VARCHAR(255) UNIQUE NOT NULL,
+          password VARCHAR(255) NOT NULL,
+          role VARCHAR(50) NOT NULL DEFAULT 'Customer',
+          status VARCHAR(50) NOT NULL DEFAULT 'Active',
+          permissions TEXT,
+          created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+        );
+        ALTER TABLE users ADD COLUMN IF NOT EXISTS permissions TEXT;
 
-    // Seed Customers if table empty
-    const custCount = await p.query("SELECT COUNT(*) FROM customers;");
-    if (parseInt(custCount.rows[0].count, 10) === 0) {
-      await p.query(`
-        INSERT INTO customers (id, company, name, email, phone, city, tax_id, status, active_contracts, total_spend) VALUES
-        ('CUST-001', 'TechFlow Labs Pvt Ltd', 'Priya Sharma', 'finance@techflow.io', '+91 98450 11223', 'Bangalore', '29AABCT1332L1Z1', 'Active', 1, 142500),
-        ('CUST-002', 'Acme Design Studio', 'Rajesh Kumar', 'billing@acmedesign.in', '+91 98201 44556', 'Mumbai', '27AABCA4321K1ZM', 'Active', 1, 88200),
-        ('CUST-003', 'Brightleaf Retail Ltd', 'Ananya Patel', 'accounts@brightleaf.store', '+91 97234 66778', 'Ahmedabad', '24AABCB9876J1ZQ', 'Past Due', 1, 52400),
-        ('CUST-004', 'Nova Horizon Media', 'Vikram Malhotra', 'vikram@novahorizon.com', '+91 98111 88990', 'Delhi NCR', '07AABCN5544H1ZS', 'Active', 1, 36900),
-        ('CUST-005', 'Zenith Robotics Systems', 'Neha Iyer', 'neha.iyer@zenithrobotics.in', '+91 94400 33445', 'Hyderabad', '36AABCZ1234F1ZX', 'Onboarding', 0, 24000),
-        ('CUST-006', 'BluePeak Logistics LLP', 'Suresh Pillai', 'accounts@bluepeak.in', '+91 94471 22334', 'Kochi', '32AABCB7890D1ZR', 'Active', 1, 18500);
-      `);
-    }
+        CREATE TABLE IF NOT EXISTS products (
+          id VARCHAR(50) PRIMARY KEY,
+          name VARCHAR(150) NOT NULL,
+          description TEXT,
+          price INTEGER NOT NULL,
+          interval VARCHAR(50) NOT NULL DEFAULT 'Monthly',
+          status VARCHAR(50) NOT NULL DEFAULT 'Active',
+          variants INTEGER NOT NULL DEFAULT 1,
+          created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+        );
 
-    // Seed Discounts if table empty
-    const discCount = await p.query("SELECT COUNT(*) FROM discounts;");
-    if (parseInt(discCount.rows[0].count, 10) === 0) {
-      await p.query(`
-        INSERT INTO discounts (id, name, type, value, redemption_limit, active) VALUES
-        ('DISC-01', 'FESTIVE10', 'Percentage', 10, 250, TRUE),
-        ('DISC-02', 'BULK20', 'Fixed', 2000, 100, TRUE),
-        ('DISC-03', 'WELCOME15', 'Percentage', 15, 500, FALSE);
-      `);
-    }
+        CREATE TABLE IF NOT EXISTS customers (
+          id VARCHAR(50) PRIMARY KEY,
+          company VARCHAR(200) NOT NULL,
+          name VARCHAR(150) NOT NULL,
+          email VARCHAR(255) NOT NULL,
+          phone VARCHAR(50),
+          city VARCHAR(100),
+          tax_id VARCHAR(50),
+          status VARCHAR(50) NOT NULL DEFAULT 'Active',
+          active_contracts INTEGER NOT NULL DEFAULT 0,
+          total_spend INTEGER NOT NULL DEFAULT 0,
+          created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+        );
 
-    // Seed Taxes if table empty
-    const taxCount = await p.query("SELECT COUNT(*) FROM taxes;");
-    if (parseInt(taxCount.rows[0].count, 10) === 0) {
-      await p.query(`
-        INSERT INTO taxes (id, name, rate, scope, active) VALUES
-        ('TAX-01', 'India GST', 18, 'India / domestic', TRUE),
-        ('TAX-02', 'Reverse charge VAT', 0, 'Verified B2B cross-border', TRUE);
-      `);
-    }
+        CREATE TABLE IF NOT EXISTS discounts (
+          id VARCHAR(50) PRIMARY KEY,
+          name VARCHAR(100) NOT NULL,
+          type VARCHAR(50) NOT NULL,
+          value INTEGER NOT NULL,
+          redemption_limit INTEGER NOT NULL DEFAULT 100,
+          active BOOLEAN NOT NULL DEFAULT TRUE,
+          created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+        );
 
-    // Seed Audit Logs if table empty
-    const auditCount = await p.query("SELECT COUNT(*) FROM audit_logs;");
-    if (parseInt(auditCount.rows[0].count, 10) === 0) {
-      await p.query(`
-        INSERT INTO audit_logs (id, action, actor, area) VALUES
-        ('AUD-105', 'Inspected TechFlow Labs account record', 'Priya Nair', 'Customer records'),
-        ('AUD-104', 'Updated GST rule to 18%', 'Priya Nair', 'Tax rules'),
-        ('AUD-103', 'Confirmed invoice INV-2026-1055', 'Siddharth Rao', 'Invoicing'),
-        ('AUD-102', 'Created Enterprise Suite quotation', 'Siddharth Rao', 'Subscriptions'),
-        ('AUD-101', 'Enabled BULK20 discount', 'Priya Nair', 'Discounts');
-      `);
-    }
+        CREATE TABLE IF NOT EXISTS taxes (
+          id VARCHAR(50) PRIMARY KEY,
+          name VARCHAR(100) NOT NULL,
+          rate INTEGER NOT NULL,
+          scope VARCHAR(150) NOT NULL,
+          active BOOLEAN NOT NULL DEFAULT TRUE,
+          created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+        );
 
-    isInitialized = true;
-    return true;
-  } catch (err: any) {
-    console.warn("[PostgreSQL] Connection note: Database not reachable or tables already configured.", err.message);
-    return false;
-  }
+        CREATE TABLE IF NOT EXISTS audit_logs (
+          id VARCHAR(50) PRIMARY KEY,
+          action TEXT NOT NULL,
+          actor VARCHAR(150) NOT NULL,
+          area VARCHAR(100) NOT NULL,
+          created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+        );
+
+        CREATE TABLE IF NOT EXISTS subscriptions (
+          id             VARCHAR(50) PRIMARY KEY,
+          customer_id    VARCHAR(50) NOT NULL REFERENCES customers(id) ON DELETE RESTRICT,
+          plan_name      VARCHAR(150) NOT NULL,
+          billing_interval VARCHAR(20) NOT NULL DEFAULT 'Monthly',
+          variant_name   VARCHAR(100) NOT NULL DEFAULT 'Standard',
+          variant_price  INTEGER NOT NULL DEFAULT 0,
+          addons         TEXT[] NOT NULL DEFAULT '{}',
+          base_price     INTEGER NOT NULL,
+          tax_rate       NUMERIC(5,4) NOT NULL DEFAULT 0.18,
+          discount_amount INTEGER NOT NULL DEFAULT 0,
+          total_cents    INTEGER NOT NULL,
+          status         VARCHAR(20) NOT NULL DEFAULT 'Draft',
+          start_date     DATE NOT NULL,
+          expiry_date    DATE NOT NULL,
+          payment_terms  VARCHAR(30) NOT NULL DEFAULT 'Net 30',
+          icon_letter    CHAR(1) NOT NULL DEFAULT 'P',
+          icon_theme     VARCHAR(20) NOT NULL DEFAULT 'purple',
+          dunning_attempts INTEGER NOT NULL DEFAULT 0,
+          created_at     TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE INDEX IF NOT EXISTS idx_subs_customer ON subscriptions(customer_id);
+        CREATE INDEX IF NOT EXISTS idx_subs_status   ON subscriptions(status);
+
+        CREATE TABLE IF NOT EXISTS invoices (
+          id             VARCHAR(50) PRIMARY KEY,
+          subscription_id VARCHAR(50) REFERENCES subscriptions(id) ON DELETE SET NULL,
+          customer_name  VARCHAR(200) NOT NULL,
+          customer_email VARCHAR(255) NOT NULL,
+          customer_tax_id VARCHAR(50) NOT NULL,
+          description    TEXT NOT NULL,
+          subtotal       INTEGER NOT NULL,
+          tax            INTEGER NOT NULL,
+          discount       INTEGER NOT NULL DEFAULT 0,
+          total          INTEGER NOT NULL,
+          status         VARCHAR(20) NOT NULL DEFAULT 'Draft',
+          issued_date    DATE NOT NULL,
+          due_date       DATE NOT NULL,
+          idempotency_key VARCHAR(100) UNIQUE NOT NULL,
+          days_overdue   INTEGER,
+          sent_at        VARCHAR(100),
+          created_at     TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE INDEX IF NOT EXISTS idx_invoices_status ON invoices(status);
+        CREATE INDEX IF NOT EXISTS idx_invoices_due    ON invoices(due_date);
+        CREATE INDEX IF NOT EXISTS idx_invoices_sub    ON invoices(subscription_id);
+
+        CREATE TABLE IF NOT EXISTS payments (
+          id             VARCHAR(50) PRIMARY KEY,
+          invoice_id     VARCHAR(50) NOT NULL REFERENCES invoices(id) ON DELETE RESTRICT,
+          customer_name  VARCHAR(200) NOT NULL,
+          method         VARCHAR(50) NOT NULL,
+          amount         INTEGER NOT NULL,
+          date           DATE NOT NULL,
+          transaction_ref VARCHAR(100) NOT NULL,
+          notes          TEXT,
+          created_at     TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE INDEX IF NOT EXISTS idx_payments_invoice ON payments(invoice_id);
+      `);
+
+      const adminEmail = (process.env.ADMIN_EMAIL || "admin@gmail.com").toLowerCase();
+      const adminPassword = process.env.ADMIN_PASSWORD || "admin";
+      await p.query(
+        `INSERT INTO users (id, name, email, password, role, status, permissions)
+         VALUES ('USR-ADMIN-01', 'Priya Nair', $1, $2, 'Administrator', 'Active', 'All')
+         ON CONFLICT (email) DO NOTHING;`,
+        [adminEmail, hashPassword(adminPassword)]
+      );
+
+      const staffEmail = (process.env.STAFF_EMAIL || "staff@payloop.internal").toLowerCase();
+      const staffPassword = process.env.STAFF_PASSWORD || "staff";
+      await p.query(
+        `INSERT INTO users (id, name, email, password, role, status, permissions)
+         VALUES
+           ('USR-STAFF-01', 'Siddharth Rao', $1, $2, 'Operations Specialist', 'Active',
+            'Customer records, Subscriptions & Quotes, Invoices & Billing'),
+           ('USR-STAFF-02', 'Maya Joseph', 'maya.joseph@payloop.internal', $2,
+            'Billing Manager', 'Active',
+            'Invoices & Billing, Payment recording, Dunning & Collections')
+         ON CONFLICT (email) DO NOTHING;`,
+        [staffEmail, hashPassword(staffPassword)]
+      );
+
+      await p.query(
+        `INSERT INTO users (id, name, email, password, role, status, permissions)
+         VALUES ('USR-CUST-01', 'Aanya Mehta', 'aanya@studio.in', $1, 'Customer', 'Active', '')
+         ON CONFLICT (email) DO NOTHING;`,
+        [hashPassword("aanya")]
+      );
+
+      const usersRes = await p.query<{ id: string; password: string }>(
+        "SELECT id, password FROM users;"
+      );
+      for (const row of usersRes.rows) {
+        if (!isHashed(row.password)) {
+          await p.query("UPDATE users SET password = $1 WHERE id = $2;", [
+            hashPassword(row.password),
+            row.id,
+          ]);
+        }
+      }
+
+      const prodCount = await p.query<{ count: string }>("SELECT COUNT(*) FROM products;");
+      if (parseInt(prodCount.rows[0].count, 10) === 0) {
+        await p.query(`
+          INSERT INTO products (id, name, description, price, interval, status, variants) VALUES
+          ('PROD-01', 'Studio Workspace', 'Workspace management for creative teams', 3500, 'Monthly', 'Active', 2),
+          ('PROD-02', 'Flow Analytics', 'Product and engagement analytics', 1180, 'Monthly', 'Active', 1),
+          ('PROD-03', 'Cloud Storage Team', 'Managed storage for growing teams', 2000, 'Monthly', 'Active', 1),
+          ('PROD-04', 'Enterprise Suite', 'Custom enterprise subscription package', 160000, 'Yearly', 'Archived', 3);
+        `);
+      }
+
+      const custCount = await p.query<{ count: string }>("SELECT COUNT(*) FROM customers;");
+      if (parseInt(custCount.rows[0].count, 10) === 0) {
+        await p.query(`
+          INSERT INTO customers (id, company, name, email, phone, city, tax_id, status, active_contracts, total_spend) VALUES
+          ('CUST-001', 'TechFlow Labs Pvt Ltd', 'Priya Sharma', 'finance@techflow.io', '+91 98450 11223', 'Bangalore', '29AABCT1332L1Z1', 'Active', 1, 142500),
+          ('CUST-002', 'Acme Design Studio', 'Rajesh Kumar', 'billing@acmedesign.in', '+91 98201 44556', 'Mumbai', '27AABCA4321K1ZM', 'Active', 1, 88200),
+          ('CUST-003', 'Brightleaf Retail Ltd', 'Ananya Patel', 'accounts@brightleaf.store', '+91 97234 66778', 'Ahmedabad', '24AABCB9876J1ZQ', 'Past Due', 1, 52400),
+          ('CUST-004', 'Nova Horizon Media', 'Vikram Malhotra', 'vikram@novahorizon.com', '+91 98111 88990', 'Delhi NCR', '07AABCN5544H1ZS', 'Active', 1, 36900),
+          ('CUST-005', 'Zenith Robotics Systems', 'Neha Iyer', 'neha.iyer@zenithrobotics.in', '+91 94400 33445', 'Hyderabad', '36AABCZ1234F1ZX', 'Onboarding', 0, 24000),
+          ('CUST-006', 'BluePeak Logistics LLP', 'Suresh Pillai', 'accounts@bluepeak.in', '+91 94471 22334', 'Kochi', '32AABCB7890D1ZR', 'Active', 1, 18500);
+        `);
+      }
+
+      const discCount = await p.query<{ count: string }>("SELECT COUNT(*) FROM discounts;");
+      if (parseInt(discCount.rows[0].count, 10) === 0) {
+        await p.query(`
+          INSERT INTO discounts (id, name, type, value, redemption_limit, active) VALUES
+          ('DISC-01', 'FESTIVE10', 'Percentage', 10, 250, TRUE),
+          ('DISC-02', 'BULK20',    'Fixed',      2000, 100, TRUE),
+          ('DISC-03', 'WELCOME15', 'Percentage', 15, 500, FALSE);
+        `);
+      }
+
+      const taxCount = await p.query<{ count: string }>("SELECT COUNT(*) FROM taxes;");
+      if (parseInt(taxCount.rows[0].count, 10) === 0) {
+        await p.query(`
+          INSERT INTO taxes (id, name, rate, scope, active) VALUES
+          ('TAX-01', 'India GST', 18, 'India / domestic', TRUE),
+          ('TAX-02', 'Reverse charge VAT', 0, 'Verified B2B cross-border', TRUE);
+        `);
+      }
+
+      const subCount = await p.query<{ count: string }>("SELECT COUNT(*) FROM subscriptions;");
+      if (parseInt(subCount.rows[0].count, 10) === 0) {
+        await p.query(`
+          INSERT INTO subscriptions
+            (id, customer_id, plan_name, billing_interval, variant_name, variant_price, addons,
+             base_price, tax_rate, discount_amount, total_cents, status,
+             start_date, expiry_date, payment_terms, icon_letter, icon_theme, dunning_attempts)
+          VALUES
+            ('SUB-2026-0814','CUST-001','Enterprise Scale Pack','Monthly','Odoo Brand (+560)',560,
+             ARRAY['Priority Support','Extra Storage'],15000,0.18,2000,17523,'Active',
+             '2026-08-15','2027-08-15','Net 30','T','purple',0),
+            ('SUB-2026-0792','CUST-002','Studio Workspace Pro','Monthly','Standard',0,
+             ARRAY['Priority Support (+490)'],3500,0.18,0,4708,'Active',
+             '2026-10-12','2027-10-12','Due on Receipt','A','sage',0),
+            ('SUB-2026-0640','CUST-003','Growth Studio Bundle','Monthly','Standard',0,
+             ARRAY['Priority Support (+490)'],3500,0.18,0,4708,'Past Due',
+             '2026-06-18','2027-06-18','Net 15','B','coral',2),
+            ('SUB-2026-0912','CUST-004','Enterprise Suite','Yearly','Odoo Healthcare Custom (+560)',560,
+             ARRAY['Priority Support','Dedicated Storage'],160000,0.18,15000,171753,'Quotation',
+             '2026-11-01','2027-11-01','Net 30','L','blue',0),
+            ('SUB-2026-0521','CUST-006','Cloud Storage Team','Monthly','Standard',0,
+             ARRAY[]::TEXT[],2000,0.18,0,2360,'Paused',
+             '2026-05-04','2027-05-04','Net 15','C','amber',0),
+            ('SUB-2026-0935','CUST-004','Studio Workspace Pro','Monthly','Odoo Brand (+560)',560,
+             ARRAY['Extra 500GB Storage'],3500,0.18,400,5263,'Draft',
+             '2026-11-01','2027-11-01','Net 30','M','emerald',0);
+        `);
+      }
+
+      const invCount = await p.query<{ count: string }>("SELECT COUNT(*) FROM invoices;");
+      if (parseInt(invCount.rows[0].count, 10) === 0) {
+        await p.query(`
+          INSERT INTO invoices
+            (id, subscription_id, customer_name, customer_email, customer_tax_id, description,
+             subtotal, tax, discount, total, status, issued_date, due_date, idempotency_key,
+             days_overdue, sent_at)
+          VALUES
+            ('INV-2026-1048','SUB-2026-0792','Acme Design Studio','aanya@studio.in','27AABCA1234F1Z5',
+             'Studio workspace - Pro + Priority support',3990,718,0,4708,'Paid',
+             '2026-10-12','2026-10-12','idem_9f2a41e8-782b-4221-8ecb',NULL,'12 Oct 2026, 09:15 AM'),
+            ('INV-2026-1049','SUB-2026-0814','TechFlow Labs','devon@techflow.io','29BBDFE4321A1Z9',
+             'Enterprise Scale Pack (Monthly Cycle)',16850,2673,2000,17523,'Paid',
+             '2026-10-15','2026-11-15','idem_6b3c101a-1122-3344-99aa',NULL,'15 Oct 2026, 10:02 AM'),
+            ('INV-2026-1052','SUB-2026-0640','Brightleaf Retail','pooja@brightleaf.store','07AAACB9876P1Z3',
+             'Growth Studio Bundle - Pro',3990,718,0,4708,'Overdue',
+             '2026-10-03','2026-10-18','idem_4e7f89b1-00aa-bbcc-dd11',13,'03 Oct 2026, 08:30 AM'),
+            ('INV-2026-1055','SUB-2026-0935','Apex Media House','karan@apexmedia.co','27AADCA5678B1Z2',
+             'Apex Custom Media Suite',28000,5040,1040,32000,'Confirmed',
+             '2026-10-25','2026-11-10','idem_1a2b3c4d-5e6f-7a8b-9c0d',NULL,'25 Oct 2026, 11:45 AM'),
+            ('INV-2026-1058','SUB-2026-0814','TechFlow Labs','devon@techflow.io','29BBDFE4321A1Z9',
+             'Enterprise Scale Pack - Scheduled Renewal',16850,2673,2000,17523,'Draft',
+             '2026-10-31','2026-11-15','idem_77aa88bb-ccdd-eeff-0011',NULL,NULL);
+        `);
+      }
+
+      const payCount = await p.query<{ count: string }>("SELECT COUNT(*) FROM payments;");
+      if (parseInt(payCount.rows[0].count, 10) === 0) {
+        await p.query(`
+          INSERT INTO payments (id, invoice_id, customer_name, method, amount, date, transaction_ref, notes)
+          VALUES
+            ('PAY-9921','INV-2026-1048','Acme Design Studio','UPI / Razorpay',4708,
+             '2026-10-12','pay_Rzp90283419','Auto-debit mandate settled successfully.'),
+            ('PAY-9922','INV-2026-1049','TechFlow Labs','Bank Transfer (NEFT)',17523,
+             '2026-10-16','HDFC0001298402','Direct corporate bank transfer reconciled.');
+        `);
+      }
+
+      const auditCount = await p.query<{ count: string }>("SELECT COUNT(*) FROM audit_logs;");
+      if (parseInt(auditCount.rows[0].count, 10) === 0) {
+        await p.query(`
+          INSERT INTO audit_logs (id, action, actor, area) VALUES
+          ('AUD-000105', 'Inspected TechFlow Labs account record', 'Priya Nair', 'Customer records'),
+          ('AUD-000104', 'Updated GST rule to 18%', 'Priya Nair', 'Tax rules'),
+          ('AUD-000103', 'Confirmed invoice INV-2026-1055', 'Siddharth Rao', 'Invoicing'),
+          ('AUD-000102', 'Created Enterprise Suite quotation', 'Siddharth Rao', 'Subscriptions'),
+          ('AUD-000101', 'Enabled BULK20 discount', 'Priya Nair', 'Discounts');
+        `);
+      }
+
+      isInitialized = true;
+      return true;
+    } catch (err: any) {
+      console.warn("[PostgreSQL] initDb failed:", err?.message ?? String(err));
+      return false;
+    } finally {
+      seedInFlight = null;
+    }
+  })();
+
+  return seedInFlight;
 }
-

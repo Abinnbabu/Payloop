@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useState, type FormEvent, type ReactNode } from "react";
 import { Icon, type IconName } from "@/components/icon";
+import type { SessionUser } from "@/lib/auth";
 
 type NavItem = {
   label: string;
@@ -111,7 +112,7 @@ function Modal({
   );
 }
 
-export function DashboardClient() {
+export function DashboardClient({ user }: { user: SessionUser }) {
   const [activeSection, setActiveSection] = useState("Overview");
   const [dialog, setDialog] = useState<Dialog>(null);
   const [subscriptions, setSubscriptions] = useState(initialSubscriptions);
@@ -261,16 +262,21 @@ export function DashboardClient() {
         <div className="workspace-switcher-wrap">
           <button type="button" className="workspace-switcher" aria-expanded={accountMenuOpen} onClick={() => setAccountMenuOpen(!accountMenuOpen)}>
             <span className="workspace-avatar">AM</span>
-            <span className="workspace-name"><strong>Aanya Mehta</strong><small>Personal account</small></span>
+            <span className="workspace-name"><strong>{user.name}</strong><small>Personal account</small></span>
             <Icon name="chevronDown" size={15} />
           </button>
           {accountMenuOpen && (
             <div className="account-dropdown">
-              <button type="button" onClick={() => {
-                setDialog("settings");
-                setAccountMenuOpen(false);
-              }}><Icon name="grid" size={15} /> Account settings</button>
-              <Link href="/login"><Icon name="arrowRight" size={15} /> Log out</Link>
+              <button
+                type="button"
+                className="admin-button secondary small"
+                onClick={async () => {
+                  await fetch("/api/auth/logout", { method: "POST" });
+                  window.location.href = "/login";
+                }}
+              >
+                Sign out
+              </button>
             </div>
           )}
         </div>
@@ -296,7 +302,7 @@ export function DashboardClient() {
           </div>
           <div className="sidebar-account">
             <span className="avatar avatar-peach">AM</span>
-            <span><strong>Aanya Mehta</strong><small>aanya@studio.in</small></span>
+            <span><strong>{user.name}</strong><small>{user.email}</small></span>
             <button type="button" className="account-menu" aria-label="Open account settings" onClick={() => setDialog("settings")}><Icon name="chevronDown" size={16} /></button>
           </div>
         </div>
@@ -317,7 +323,7 @@ export function DashboardClient() {
           <div className="welcome-row">
             <div>
               <p className="welcome-date">SATURDAY, OCTOBER 31, 2026</p>
-              <h1>Good morning, Aanya <span className="wave">✳</span></h1>
+              <h1>Good morning, {user.name.split(" ")[0]} <span className="wave">✳</span></h1>
               <p className="welcome-subtitle">Here’s the latest on your subscriptions.</p>
             </div>
             <button type="button" className="button button-dark manage-main-button" onClick={openPlans}><Icon name="plus" size={17} /> Manage subscription</button>

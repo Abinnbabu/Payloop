@@ -1,154 +1,198 @@
 import { NextResponse } from "next/server";
 import { query, initDb } from "@/lib/db";
+import { requireRole, authErrorResponse } from "@/lib/auth";
+import { hashPassword } from "@/lib/crypto";
+import { newAuditId, newUserId } from "@/lib/ids";
 
 export const dynamic = "force-dynamic";
+const ADMIN = ["Administrator"] as const;
+const NON_ADMIN_ROLES = [
+  "Operations Specialist",
+  "Billing Manager",
+  "Support Lead",
+  "Administrator",
+];
 
 export async function GET() {
   try {
+    await requireRole([...ADMIN]);
     await initDb();
     const result = await query(
-      `SELECT id, name, email, role, status, 
-              COALESCE(permissions, 'Customer records, Subscriptions & Quotes, Invoices & Billing') AS permissions, 
-              TO_CHAR(created_at, 'Mon DD, YYYY') AS "createdAt" 
-       FROM users 
-       WHERE role != 'Customer' 
+      `SELECT id, name, email, role, status,
+              COALESCE(permissions, '') AS permissions,
+              TO_CHAR(created_at, 'Mon DD, YYYY') AS "createdAt"
+       FROM users
+       WHERE role != 'Customer'
        ORDER BY created_at ASC;`
     );
     return NextResponse.json({ success: true, staff: result.rows });
-  } catch (err: any) {
-    return NextResponse.json({ success: false, error: err.message }, { status: 500 });
+  } catch (err) {
+    return authErrorResponse(err);
   }
 }
 
 export async function POST(request: Request) {
   try {
-    const body = await request.json();
-    const { name, email, password, role, permissions } = body;
-
+    const user = await requireRole([...ADMIN]);
+    const { name, email, password, role, permissions } = await request.json();
     if (!name || !email || !password) {
       return NextResponse.json(
-        { success: false, error: "Name, email, and initial password are required." },
+        { success: false, error: "name, email, password required." },
         { status: 400 }
       );
     }
-
-    await initDb();
-    const id = `USR-${Date.now().toString().slice(-4)}`;
-    const assignedRole = role || "Operations Specialist";
+    if (String(password).length < 6) {
+      return NextResponse.json(
+        { success: false, error: "password must be at least 6 characters." },
+        { status: 400 }
+      );
+    }
+    const assignedRole = NON_ADMIN_ROLES.includes(role) ? role : "Operations Specialist";
     const assignedPowers = Array.isArray(permissions)
       ? permissions.join(", ")
-      : String(permissions || "Customer records, Subscriptions & Quotes");
-
-    const result = await query(
-      `INSERT INTO users (id, name, email, password, role, status, permissions)
-       VALUES ($1, $2, $3, $4, $5, 'Active', $6)
-       ON CONFLICT (email) DO UPDATE SET 
-         name = $2, 
-         password = $4, 
-         role = $5, 
-         permissions = $6, 
-         status = 'Active'
-       RETURNING id, name, email, role, status, permissions;`,
-      [id, name.trim(), email.trim().toLowerCase(), password, assignedRole, assignedPowers]
-    );
-
-    // Record audit log
-    await query(
-      "INSERT INTO audit_logs (id, action, actor, area) VALUES ($1, $2, $3, $4);",
-      [
-        `AUD-${Date.now().toString().slice(-4)}`,
-        `Added staff profile for ${name} (${assignedRole}) with permissions [${assignedPowers}]`,
-        "Priya Nair",
-        "Staff access",
-      ]
-    );
-
-    return NextResponse.json({ success: true, staff: result.rows[0] });
-  } catch (err: any) {
-    return NextResponse.json({ success: false, error: err.message }, { status: 500 });
-  }
-}
-
-export async function DELETE(request: Request) {
-  try {
-    const { searchParams } = new URL(request.url);
-    const id = searchParams.get("id");
-
-    if (!id) {
-      return NextResponse.json({ success: false, error: "Staff member ID is required." }, { status: 400 });
-    }
-
-    if (id === "USR-ADMIN-01") {
-      return NextResponse.json({ success: false, error: "Cannot delete master administrator account." }, { status: 403 });
-    }
+      : String(permissions ?? "Customer records, Subscriptions & Quotes");
 
     await initDb();
-    const result = await query("DELETE FROM users WHERE id = $1 RETURNING id, name, email;", [id]);
-
-    if (result.rows.length === 0) {
-      return NextResponse.json({ success: false, error: "Staff member not found." }, { status: 404 });
-    }
-
-    const deleted = result.rows[0];
-    await query(
-      "INSERT INTO audit_logs (id, action, actor, area) VALUES ($1, $2, $3, $4);",
-      [`AUD-${Date.now().toString().slice(-4)}`, `Revoked staff access for ${deleted.name} (${deleted.email})`, "Priya Nair", "Staff access"]
+    const existing = await query<{ id: string }>(
+      "SELECT id FROM users WHERE LOWER(email) = $1 LIMIT 1;",
+      [String(email).toLowerCase()]
     );
 
-    return NextResponse.json({ success: true, deleted });
-  } catch (err: any) {
-    return NextResponse.json({ success: false, error: err.message }, { status: 500 });
+    let result;
+    if (existing.rows.length > 0) {
+      result = await query(
+        `UPDATE users
+         SET name = $1, role = $2, permissions = $3, status = 'Active'
+         WHERE id = $4
+         RETURNING id, name, email, role, status, permissions;`,
+        [String(name).trim(), assignedRole, assignedPowers, existing.rows[0].id]
+      );
+      await query(
+        `INSERT INTO audit_logs (id, action, actor, area)
+         VALUES ($1, $2, $3, 'Staff access');`,
+        [newAuditId(), `Reactivated staff profile for ${name} (${assignedRole})`, user.name]
+      );
+    } else {
+      const id = newUserId();
+      result = await query(
+        `INSERT INTO users (id, name, email, password, role, status, permissions)
+         VALUES ($1, $2, $3, $4, $5, 'Active', $6)
+         RETURNING id, name, email, role, status, permissions;`,
+        [
+          id, String(name).trim(), String(email).trim().toLowerCase(),
+          hashPassword(String(password)), assignedRole, assignedPowers,
+        ]
+      );
+      await query(
+        `INSERT INTO audit_logs (id, action, actor, area)
+         VALUES ($1, $2, $3, 'Staff access');`,
+        [
+          newAuditId(),
+          `Added staff profile for ${name} (${assignedRole}) with permissions [${assignedPowers}]`,
+          user.name,
+        ]
+      );
+    }
+    return NextResponse.json({ success: true, staff: result.rows[0] });
+  } catch (err) {
+    return authErrorResponse(err);
   }
 }
 
 export async function PATCH(request: Request) {
   try {
-    const body = await request.json();
-    const { id, role, permissions, status } = body;
-
+    const user = await requireRole([...ADMIN]);
+    const { id, role, permissions, status } = await request.json();
     if (!id) {
-      return NextResponse.json({ success: false, error: "Staff ID is required." }, { status: 400 });
+      return NextResponse.json(
+        { success: false, error: "id required." },
+        { status: 400 }
+      );
     }
-
-    await initDb();
     const updates: string[] = [];
     const values: any[] = [];
     let idx = 1;
-
     if (role) {
       updates.push(`role = $${idx++}`);
       values.push(role);
     }
-    if (permissions) {
+    if (permissions !== undefined) {
       updates.push(`permissions = $${idx++}`);
-      values.push(Array.isArray(permissions) ? permissions.join(", ") : permissions);
+      values.push(Array.isArray(permissions) ? permissions.join(", ") : String(permissions));
     }
     if (status) {
       updates.push(`status = $${idx++}`);
       values.push(status);
     }
-
     if (updates.length === 0) {
-      return NextResponse.json({ success: false, error: "No fields to update." }, { status: 400 });
+      return NextResponse.json(
+        { success: false, error: "no fields to update." },
+        { status: 400 }
+      );
     }
-
     values.push(id);
-    const sql = `UPDATE users SET ${updates.join(", ")} WHERE id = $${idx} RETURNING id, name, email, role, status, permissions;`;
+    const sql = `UPDATE users SET ${updates.join(", ")}
+                 WHERE id = $${idx}
+                 RETURNING id, name, email, role, status, permissions;`;
+    await initDb();
     const result = await query(sql, values);
-
     if (result.rows.length === 0) {
-      return NextResponse.json({ success: false, error: "Staff member not found." }, { status: 404 });
+      return NextResponse.json(
+        { success: false, error: "Staff member not found." },
+        { status: 404 }
+      );
     }
-
     const member = result.rows[0];
     await query(
-      "INSERT INTO audit_logs (id, action, actor, area) VALUES ($1, $2, $3, $4);",
-      [`AUD-${Date.now().toString().slice(-4)}`, `Updated staff permissions for ${member.name}`, "Priya Nair", "Staff access"]
+      `INSERT INTO audit_logs (id, action, actor, area)
+       VALUES ($1, $2, $3, 'Staff access');`,
+      [newAuditId(), `Updated staff ${member.name}`, user.name]
     );
-
     return NextResponse.json({ success: true, staff: member });
-  } catch (err: any) {
-    return NextResponse.json({ success: false, error: err.message }, { status: 500 });
+  } catch (err) {
+    return authErrorResponse(err);
   }
 }
 
+export async function DELETE(request: Request) {
+  try {
+    const user = await requireRole([...ADMIN]);
+    const id = new URL(request.url).searchParams.get("id");
+    if (!id) {
+      return NextResponse.json(
+        { success: false, error: "id required." },
+        { status: 400 }
+      );
+    }
+    if (id === "USR-ADMIN-01" || id === user.id) {
+      return NextResponse.json(
+        { success: false, error: "Cannot delete the primary administrator." },
+        { status: 403 }
+      );
+    }
+    await initDb();
+    const result = await query(
+      "DELETE FROM users WHERE id = $1 RETURNING id, name, email;",
+      [id]
+    );
+    if (result.rows.length === 0) {
+      return NextResponse.json(
+        { success: false, error: "Staff member not found." },
+        { status: 404 }
+      );
+    }
+    const deleted = result.rows[0];
+    await query(
+      `INSERT INTO audit_logs (id, action, actor, area)
+       VALUES ($1, $2, $3, 'Staff access');`,
+      [
+        newAuditId(),
+        `Revoked staff access for ${deleted.name} (${deleted.email})`,
+        user.name,
+      ]
+    );
+    return NextResponse.json({ success: true, deleted });
+  } catch (err) {
+    return authErrorResponse(err);
+  }
+}

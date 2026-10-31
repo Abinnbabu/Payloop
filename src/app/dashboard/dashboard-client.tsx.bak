@@ -1,0 +1,525 @@
+"use client";
+
+import Link from "next/link";
+import { useState, type FormEvent, type ReactNode } from "react";
+import { Icon, type IconName } from "@/components/icon";
+
+type NavItem = {
+  label: string;
+  icon: IconName;
+  target: string;
+};
+
+type Subscription = {
+  id: string;
+  catalogId: string;
+  name: string;
+  plan: string;
+  renewal: string;
+  monthlyPrice: number;
+  icon: string;
+  color: string;
+  prioritySupport: boolean;
+  status: "Active" | "Cancelled";
+};
+
+type Invoice = {
+  id: string;
+  date: string;
+  description: string;
+  amount: number;
+  status: "Paid" | "Pending";
+};
+
+type Dialog = "plans" | "add" | "invoices" | "payment" | "settings" | "password" | "notifications" | null;
+
+const navigation: NavItem[] = [
+  { label: "Overview", icon: "grid", target: "#overview" },
+  { label: "Subscriptions", icon: "layers", target: "#subscriptions" },
+  { label: "Invoices", icon: "receipt", target: "#invoices" },
+];
+
+const initialSubscriptions: Subscription[] = [
+  { id: "studio", catalogId: "studio", name: "Studio workspace", plan: "Pro plan", renewal: "12 Nov 2026", monthlyPrice: 3500, icon: "S", color: "product-purple", prioritySupport: false, status: "Active" },
+  { id: "flow", catalogId: "flow", name: "Flow analytics", plan: "Starter plan", renewal: "18 Nov 2026", monthlyPrice: 1180, icon: "F", color: "product-sage", prioritySupport: false, status: "Active" },
+  { id: "cloud", catalogId: "cloud", name: "Cloud storage", plan: "Team plan", renewal: "04 Dec 2026", monthlyPrice: 2000, icon: "C", color: "product-blue", prioritySupport: false, status: "Active" },
+];
+
+const catalog = [
+  { id: "automation", name: "Automation suite", plan: "Growth plan", monthlyPrice: 2490, icon: "A", color: "product-purple" },
+  { id: "inbox", name: "Shared inbox", plan: "Team plan", monthlyPrice: 1490, icon: "I", color: "product-sage" },
+  { id: "reports", name: "Reports plus", plan: "Essentials plan", monthlyPrice: 890, icon: "R", color: "product-blue" },
+];
+
+let nextSubscriptionId = 0;
+
+const invoices: Invoice[] = [
+  { id: "INV-2026-1048", date: "12 Oct 2026", description: "Studio workspace - Pro", amount: 3500, status: "Paid" },
+  { id: "INV-2026-1031", date: "18 Sep 2026", description: "Flow analytics - Starter", amount: 1180, status: "Paid" },
+  { id: "INV-2026-1016", date: "12 Sep 2026", description: "Studio workspace - Pro", amount: 3500, status: "Paid" },
+  { id: "INV-2026-0984", date: "18 Aug 2026", description: "Flow analytics - Starter", amount: 1180, status: "Paid" },
+  { id: "INV-2026-0962", date: "12 Aug 2026", description: "Studio workspace - Pro", amount: 3500, status: "Paid" },
+  { id: "INV-2026-0939", date: "04 Aug 2026", description: "Cloud storage - Team", amount: 2000, status: "Paid" },
+];
+
+function formatRupees(amount: number) {
+  return `₹${amount.toLocaleString("en-IN")}`;
+}
+
+function defaultSubscriptionName(productId: string, defaultName: string, subscriptions: Subscription[]) {
+  const existingNames = new Set(
+    subscriptions
+      .filter((subscription) => subscription.catalogId === productId)
+      .map((subscription) => subscription.name.trim().toLocaleLowerCase()),
+  );
+  if (!existingNames.has(defaultName.toLocaleLowerCase())) return defaultName;
+
+  let suffix = 2;
+  while (existingNames.has(`${defaultName} ${suffix}`.toLocaleLowerCase())) suffix += 1;
+  return `${defaultName} ${suffix}`;
+}
+
+function Modal({
+  title,
+  eyebrow,
+  icon,
+  onClose,
+  children,
+  wide = false,
+}: {
+  title: string;
+  eyebrow: string;
+  icon: IconName;
+  onClose: () => void;
+  children: ReactNode;
+  wide?: boolean;
+}) {
+  return (
+    <div className="modal-backdrop" role="presentation" onMouseDown={(event) => {
+      if (event.target === event.currentTarget) onClose();
+    }}>
+      <section className={`manage-modal${wide ? " manage-modal-wide" : ""}`} role="dialog" aria-modal="true" aria-labelledby="dialog-title">
+        <div className="modal-top">
+          <span className="modal-icon"><Icon name={icon} size={19} /></span>
+          <button type="button" className="icon-button modal-close" aria-label="Close dialog" onClick={onClose}><Icon name="x" size={18} /></button>
+        </div>
+        <p className="panel-eyebrow">{eyebrow}</p>
+        <h2 id="dialog-title">{title}</h2>
+        {children}
+      </section>
+    </div>
+  );
+}
+
+export function DashboardClient() {
+  const [activeSection, setActiveSection] = useState("Overview");
+  const [dialog, setDialog] = useState<Dialog>(null);
+  const [subscriptions, setSubscriptions] = useState(initialSubscriptions);
+  const [draftSubscriptions, setDraftSubscriptions] = useState(initialSubscriptions);
+  const [newSubscriptionNames, setNewSubscriptionNames] = useState<Record<string, string>>({});
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [accountMenuOpen, setAccountMenuOpen] = useState(false);
+  const [notice, setNotice] = useState("");
+  const [savedMessage, setSavedMessage] = useState("");
+  const [cardLastFour, setCardLastFour] = useState("4242");
+  const [cardDraft, setCardDraft] = useState("4242");
+  const [passwordMessage, setPasswordMessage] = useState("");
+
+  const activeSubscriptions = subscriptions.filter(({ status }) => status === "Active");
+  const nextSubscription = [...activeSubscriptions].sort(
+    (first, second) => Date.parse(first.renewal) - Date.parse(second.renewal),
+  )[0];
+  const nextPaymentAmount = nextSubscription
+    ? nextSubscription.monthlyPrice + (nextSubscription.prioritySupport ? 490 : 0)
+    : 0;
+
+  function showNotice(message: string) {
+    setNotice(message);
+    window.setTimeout(() => setNotice(""), 3200);
+  }
+
+  function openPlans() {
+    setDraftSubscriptions(subscriptions.map((subscription) => ({ ...subscription })));
+    setSavedMessage("");
+    setDialog("plans");
+  }
+
+  function updateDraft(id: string, update: Partial<Subscription>) {
+    setDraftSubscriptions((current) => current.map((subscription) =>
+      subscription.id === id ? { ...subscription, ...update } : subscription,
+    ));
+    setSavedMessage("");
+  }
+
+  function savePlanChanges() {
+    setSubscriptions(draftSubscriptions);
+    setSavedMessage("Your subscription changes are saved.");
+  }
+
+  function cancelSubscription(subscriptionId: string) {
+    const cancel = (subscription: Subscription): Subscription => subscription.id === subscriptionId
+      ? { ...subscription, status: "Cancelled", prioritySupport: false }
+      : subscription;
+
+    setSubscriptions((current) => current.map(cancel));
+    setDraftSubscriptions((current) => current.map(cancel));
+    setSavedMessage("Subscription cancelled. It will not renew.");
+  }
+
+  function addSubscription(productId: string) {
+    const product = catalog.find(({ id }) => id === productId);
+    if (!product) return;
+    const subscriptionName = (newSubscriptionNames[productId] ?? defaultSubscriptionName(productId, product.name, subscriptions)).trim();
+    if (!subscriptionName) {
+      showNotice("Enter a name for this subscription.");
+      return;
+    }
+    const duplicateName = subscriptions.some((subscription) =>
+      subscription.catalogId === productId && subscription.name.trim().toLocaleLowerCase() === subscriptionName.toLocaleLowerCase(),
+    );
+    if (duplicateName) {
+      showNotice("That name is already used for this plan. Choose another name.");
+      return;
+    }
+    const subscription: Subscription = {
+      ...product,
+      id: `${productId}-${Date.now()}-${nextSubscriptionId++}`,
+      catalogId: productId,
+      name: subscriptionName,
+      renewal: "01 Dec 2026",
+      prioritySupport: false,
+      status: "Active",
+    };
+    setSubscriptions((current) => [...current, subscription]);
+    setNewSubscriptionNames((current) => ({
+      ...current,
+      [productId]: defaultSubscriptionName(productId, product.name, [...subscriptions, subscription]),
+    }));
+    showNotice(`${subscriptionName} added to your subscriptions.`);
+  }
+
+  function exportInvoice(invoice: Invoice) {
+    const rows = [
+      ["Invoice number", "Invoice date", "Description", "Amount (INR)", "Status"],
+      [invoice.id, invoice.date, invoice.description, String(invoice.amount), invoice.status],
+    ];
+    const csv = rows.map((row) => row.map((field) => `"${field.replaceAll('"', '""')}"`).join(",")).join("\r\n");
+    const blob = new Blob(["\uFEFF", csv], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `${invoice.id}.csv`;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+    showNotice(`${invoice.id} downloaded as UTF-8 CSV.`);
+  }
+
+  function submitCard(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const formData = new FormData(event.currentTarget);
+    const number = String(formData.get("cardNumber") ?? "").replace(/\D/g, "");
+    if (number.length < 12) {
+      showNotice("Enter a valid card number to continue.");
+      return;
+    }
+    const lastFour = number.slice(-4);
+    setCardLastFour(lastFour);
+    setCardDraft(lastFour);
+    setDialog(null);
+    showNotice(`Payment method updated. Card ending in ${lastFour}.`);
+  }
+
+  function submitPassword(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const data = new FormData(event.currentTarget);
+    const current = String(data.get("currentPassword") ?? "");
+    const next = String(data.get("newPassword") ?? "");
+    const confirm = String(data.get("confirmPassword") ?? "");
+    if (!current) {
+      setPasswordMessage("Enter your current password.");
+      return;
+    }
+    if (!/^(?=.*[a-z])(?=.*[A-Z])(?=.*[^A-Za-z0-9]).{9,}$/.test(next)) {
+      setPasswordMessage("Use at least 9 characters with uppercase, lowercase, and a special character.");
+      return;
+    }
+    if (next !== confirm) {
+      setPasswordMessage("Your new passwords do not match.");
+      return;
+    }
+    setPasswordMessage("Password changes need an account service. No changes were made.");
+  }
+
+  return (
+    <main className="dashboard-shell">
+      <aside className={`dashboard-sidebar${menuOpen ? " sidebar-open" : ""}`}>
+        <Link className="brand dashboard-brand" href="/" aria-label="Payloop home">
+          <span className="brand-mark"><span /><span /></span>payloop
+        </Link>
+        <div className="workspace-switcher-wrap">
+          <button type="button" className="workspace-switcher" aria-expanded={accountMenuOpen} onClick={() => setAccountMenuOpen(!accountMenuOpen)}>
+            <span className="workspace-avatar">AM</span>
+            <span className="workspace-name"><strong>Aanya Mehta</strong><small>Personal account</small></span>
+            <Icon name="chevronDown" size={15} />
+          </button>
+          {accountMenuOpen && (
+            <div className="account-dropdown">
+              <button
+                type="button"
+                className="admin-button secondary small"
+                onClick={async () => {
+                  await fetch("/api/auth/logout", { method: "POST" });
+                  window.location.href = "/login";
+                }}
+              >
+                Sign out
+              </button>
+            </div>
+          )}
+        </div>
+        <div className="sidebar-label">YOUR SPACE</div>
+        <nav className="dashboard-nav" aria-label="Customer navigation">
+          {navigation.map((item) => (
+            <a className={`dashboard-nav-link${activeSection === item.label ? " nav-active" : ""}`} href={item.target} key={item.label} onClick={() => {
+              setActiveSection(item.label);
+              setMenuOpen(false);
+            }}>
+              <Icon name={item.icon} size={18} />
+              <span>{item.label}</span>
+              {item.label === "Subscriptions" && <span className="nav-count">{activeSubscriptions.length}</span>}
+            </a>
+          ))}
+        </nav>
+        <div className="sidebar-bottom">
+          <div className="help-card">
+            <span className="help-icon"><Icon name="circleHelp" size={17} /></span>
+            <strong>Need a hand?</strong>
+            <p>We’re always happy to help with your account.</p>
+            <a href="mailto:hello@payloop.example">Get in touch <Icon name="arrowUpRight" size={13} /></a>
+          </div>
+          <div className="sidebar-account">
+            <span className="avatar avatar-peach">AM</span>
+            <span><strong>Aanya Mehta</strong><small>aanya@studio.in</small></span>
+            <button type="button" className="account-menu" aria-label="Open account settings" onClick={() => setDialog("settings")}><Icon name="chevronDown" size={16} /></button>
+          </div>
+        </div>
+      </aside>
+
+      <section className="dashboard-content" id="overview">
+        <header className="dashboard-header">
+          <button type="button" className="mobile-menu" aria-label="Toggle navigation" onClick={() => setMenuOpen(!menuOpen)}><Icon name="menu" size={20} /></button>
+          <div className="breadcrumbs"><span>My account</span><Icon name="chevronRight" size={14} /><strong>{activeSection}</strong></div>
+          <div className="header-user-actions">
+            <span className="secure-label"><span /> Your account is secure</span>
+            <button type="button" className="icon-button notification-button" aria-label="Notifications" onClick={() => setDialog("notifications")}><Icon name="bell" size={18} /><i /></button>
+            <button type="button" className="avatar avatar-peach header-avatar" aria-label="Open account settings" onClick={() => setDialog("settings")}>AM</button>
+          </div>
+        </header>
+
+        <div className="dashboard-inner">
+          <div className="welcome-row">
+            <div>
+              <p className="welcome-date">SATURDAY, OCTOBER 31, 2026</p>
+              <h1>Good morning, Aanya <span className="wave">✳</span></h1>
+              <p className="welcome-subtitle">Here’s the latest on your subscriptions.</p>
+            </div>
+            <button type="button" className="button button-dark manage-main-button" onClick={openPlans}><Icon name="plus" size={17} /> Manage subscription</button>
+          </div>
+
+          <div className="summary-grid">
+            <article className="summary-card">
+              <div className="summary-label">ACTIVE SUBSCRIPTIONS <span className="summary-icon lavender"><Icon name="layers" size={16} /></span></div>
+              <div className="summary-value">{String(activeSubscriptions.length).padStart(2, "0")} <span className="summary-caption">plans in your account</span></div>
+              <div className="summary-foot"><span className="status-dot" /> Everything is up to date</div>
+            </article>
+            <article className="summary-card summary-card-highlight">
+              <div className="summary-label">NEXT PAYMENT <span className="summary-icon peach"><Icon name="creditCard" size={16} /></span></div>
+              <div className="summary-value">{formatRupees(nextPaymentAmount)}</div>
+              <div className="summary-foot">{nextSubscription ? <>Due <strong>{nextSubscription.renewal}</strong><span className="payment-chip">Upcoming</span></> : <strong>No upcoming payments</strong>}</div>
+            </article>
+            <article className="summary-card">
+              <div className="summary-label">PAYMENT METHOD <span className="summary-icon mint"><Icon name="creditCard" size={16} /></span></div>
+              <div className="payment-method"><span className="mastercard-mark"><i /><i /></span><strong>•••• {cardLastFour}</strong></div>
+              <button type="button" className="text-button summary-action" onClick={() => {
+                setCardDraft(cardLastFour);
+                setDialog("payment");
+              }}>Update payment method <Icon name="arrowUpRight" size={13} /></button>
+            </article>
+          </div>
+
+          <section className="panel subscriptions-panel" id="subscriptions">
+            <div className="panel-heading">
+              <div><p className="panel-eyebrow">THE GOOD STUFF</p><h2>Your subscriptions <span className="count-bubble">{activeSubscriptions.length}</span></h2></div>
+              <button type="button" className="text-button" onClick={openPlans}>Manage plans <Icon name="arrowRight" size={15} /></button>
+            </div>
+            <div className="subscription-list">
+              {subscriptions.map((subscription) => (
+                <article className={`subscription-row${subscription.status === "Cancelled" ? " subscription-cancelled" : ""}`} key={subscription.id}>
+                  <span className={`product-icon ${subscription.color}`}>{subscription.icon}</span>
+                  <div className="subscription-info"><strong>{subscription.name}</strong><span>{subscription.plan}{subscription.prioritySupport && " · Priority support"} <i /> {subscription.status === "Active" ? `Renews ${subscription.renewal}` : "Cancelled"}</span></div>
+                  <div className="subscription-price"><strong>{formatRupees(subscription.monthlyPrice + (subscription.prioritySupport ? 490 : 0))}</strong><span>per month</span></div>
+                  <span className={subscription.status === "Active" ? "active-pill" : "cancelled-pill"}>{subscription.status}</span>
+                  <button type="button" className="row-action" aria-label={`Manage ${subscription.name}`} onClick={openPlans}><Icon name="chevronRight" size={18} /></button>
+                </article>
+              ))}
+            </div>
+            <button type="button" className="add-subscription" onClick={() => setDialog("add")}><span><Icon name="plus" size={16} /></span> Add a subscription</button>
+          </section>
+
+          <section className="panel invoices-panel" id="invoices">
+            <div className="panel-heading invoice-heading">
+              <div><p className="panel-eyebrow">YOUR PAPER TRAIL</p><h2>Recent invoices</h2></div>
+              <button type="button" className="text-button" onClick={() => setDialog("invoices")}>All invoices <Icon name="arrowRight" size={15} /></button>
+            </div>
+            <InvoiceTable rows={invoices.slice(0, 3)} onDownload={exportInvoice} />
+          </section>
+          <footer className="dashboard-footer"><span>Made for peace of mind <span className="footer-heart">♥</span></span><a href="mailto:hello@payloop.example">Questions? We’re here for you <Icon name="arrowUpRight" size={13} /></a></footer>
+        </div>
+      </section>
+
+      {dialog === "plans" && (
+        <Modal title="Your plans, all in one place." eyebrow="MANAGE SUBSCRIPTIONS" icon="layers" onClose={() => setDialog(null)} wide>
+          <p className="modal-description">Switch priority support on or off for each active plan, or cancel a subscription.</p>
+          <div className="manage-plan-list">
+            {draftSubscriptions.map((subscription) => (
+              <article className={`manage-plan-card${subscription.status === "Cancelled" ? " plan-card-cancelled" : ""}`} key={subscription.id}>
+                <div className="modal-plan">
+                  <span className={`product-icon ${subscription.color}`}>{subscription.icon}</span>
+                  <span><strong>{subscription.name}</strong><small>{subscription.plan} · {subscription.status === "Active" ? `Renews ${subscription.renewal}` : "Cancelled"}</small></span>
+                  <strong>{formatRupees(subscription.monthlyPrice + (subscription.prioritySupport ? 490 : 0))}<small> / mo</small></strong>
+                </div>
+                {subscription.status === "Active" ? (
+                  <div className="manage-plan-actions">
+                    <label className="priority-toggle">
+                      <input type="checkbox" checked={subscription.prioritySupport} onChange={(event) => updateDraft(subscription.id, { prioritySupport: event.target.checked })} />
+                      <span className="toggle-track" />
+                      <span>Priority support <small>+₹490 / month</small></span>
+                    </label>
+                    <button type="button" className="cancel-subscription-button" onClick={() => cancelSubscription(subscription.id)}>Cancel plan</button>
+                  </div>
+                ) : <p className="cancelled-note">This plan is cancelled and will no longer renew.</p>}
+              </article>
+            ))}
+            {draftSubscriptions.length === 0 && <p className="empty-state">No subscriptions yet. Add a plan to get started.</p>}
+          </div>
+          {savedMessage && <p className="saved-message"><Icon name="check" size={14} /> {savedMessage}</p>}
+          <div className="modal-actions">
+            <button type="button" className="button button-light" onClick={() => setDialog(null)}>Close</button>
+            <button type="button" className="button button-dark" onClick={savePlanChanges}>Save changes <Icon name="arrowRight" size={15} /></button>
+          </div>
+        </Modal>
+      )}
+
+      {dialog === "add" && (
+        <Modal title="Find your next good thing." eyebrow="ADD A SUBSCRIPTION" icon="plus" onClose={() => setDialog(null)} wide>
+          <p className="modal-description">Choose a plan to add to your account. Subscription changes are shown here as demo data.</p>
+          <div className="catalog-list">
+            {catalog.map((product) => (
+              <article className="catalog-card" key={product.id}>
+                <span className={`product-icon ${product.color}`}>{product.icon}</span>
+                <span className="catalog-copy"><strong>{product.name}</strong><small>{product.plan} · Billed monthly</small></span>
+                <span className="catalog-price">{formatRupees(product.monthlyPrice)}<small> / mo</small></span>
+                <label className="new-subscription-name">
+                  <span className="visually-hidden">Name this {product.name} subscription</span>
+                  <input
+                    type="text"
+                    maxLength={60}
+                    value={newSubscriptionNames[product.id] ?? defaultSubscriptionName(product.id, product.name, subscriptions)}
+                    onChange={(event) => setNewSubscriptionNames((current) => ({ ...current, [product.id]: event.target.value }))}
+                    placeholder="Name this subscription"
+                  />
+                </label>
+                <button type="button" className="button button-dark catalog-button" onClick={() => addSubscription(product.id)}>Add plan</button>
+              </article>
+            ))}
+          </div>
+        </Modal>
+      )}
+
+      {dialog === "invoices" && (
+        <Modal title="Every invoice, easy to find." eyebrow="INVOICE HISTORY" icon="receipt" onClose={() => setDialog(null)} wide>
+          <p className="modal-description">Download a UTF-8 CSV for any invoice. Amounts are exported as plain numbers in INR.</p>
+          <InvoiceTable rows={invoices} onDownload={exportInvoice} />
+        </Modal>
+      )}
+
+      {dialog === "payment" && (
+        <Modal title="Update your payment method." eyebrow="PAYMENT DETAILS" icon="creditCard" onClose={() => setDialog(null)}>
+          <p className="modal-description">Your new card will be used for future subscription renewals.</p>
+          <form className="dialog-form" onSubmit={submitCard}>
+            <label>Cardholder name<input name="cardholder" autoComplete="cc-name" placeholder="Aanya Mehta" required /></label>
+            <label>Card number<input name="cardNumber" inputMode="numeric" autoComplete="cc-number" placeholder={`••••  ••••  ••••  ${cardDraft}`} minLength={12} required /></label>
+            <div className="form-two-columns">
+              <label>Expiry date<input name="expiry" autoComplete="cc-exp" placeholder="MM / YY" required /></label>
+              <label>Security code<input name="cvc" inputMode="numeric" autoComplete="cc-csc" placeholder="CVC" minLength={3} required /></label>
+            </div>
+            <p className="form-disclaimer">Demo only: payment details are not sent to a payment provider.</p>
+            <div className="modal-actions"><button type="button" className="button button-light" onClick={() => setDialog(null)}>Cancel</button><button type="submit" className="button button-dark">Save payment method</button></div>
+          </form>
+        </Modal>
+      )}
+
+      {dialog === "settings" && (
+        <Modal title="Your account, your way." eyebrow="ACCOUNT SETTINGS" icon="grid" onClose={() => setDialog(null)}>
+          <p className="modal-description">Manage how you access your account and pay for your plans.</p>
+          <div className="settings-options">
+            <button type="button" onClick={() => {
+              setPasswordMessage("");
+              setDialog("password");
+            }}><span className="settings-option-icon"><Icon name="check" size={16} /></span><span><strong>Change password</strong><small>Update your account password</small></span><Icon name="chevronRight" size={17} /></button>
+            <button type="button" onClick={() => {
+              setCardDraft(cardLastFour);
+              setDialog("payment");
+            }}><span className="settings-option-icon"><Icon name="creditCard" size={16} /></span><span><strong>Payment method</strong><small>Card ending in {cardLastFour}</small></span><Icon name="chevronRight" size={17} /></button>
+            <Link href="/login"><span className="settings-option-icon"><Icon name="arrowRight" size={16} /></span><span><strong>Log out</strong><small>Sign out of this account</small></span><Icon name="chevronRight" size={17} /></Link>
+          </div>
+        </Modal>
+      )}
+
+      {dialog === "password" && (
+        <Modal title="A fresh start for your password." eyebrow="CHANGE PASSWORD" icon="check" onClose={() => setDialog(null)}>
+          <p className="modal-description">Use at least 9 characters with uppercase, lowercase, and a special character.</p>
+          <form className="dialog-form" onSubmit={submitPassword}>
+            <label>Current password<input type="password" name="currentPassword" autoComplete="current-password" required /></label>
+            <label>New password<input type="password" name="newPassword" autoComplete="new-password" minLength={9} required /></label>
+            <label>Confirm new password<input type="password" name="confirmPassword" autoComplete="new-password" minLength={9} required /></label>
+            {passwordMessage && <p className="form-feedback" role="status">{passwordMessage}</p>}
+            <div className="modal-actions"><button type="button" className="button button-light" onClick={() => setDialog("settings")}>Back</button><button type="submit" className="button button-dark">Update password</button></div>
+          </form>
+        </Modal>
+      )}
+
+      {dialog === "notifications" && (
+        <Modal title="You’ve all caught up." eyebrow="NOTIFICATIONS" icon="bell" onClose={() => setDialog(null)}>
+          <div className="notification-empty"><span className="notification-empty-icon"><Icon name="check" size={21} /></span><p>Nothing new right now.</p><small>We’ll let you know when there’s something to share.</small></div>
+          <div className="modal-actions"><button type="button" className="button button-dark" onClick={() => setDialog(null)}>Sounds good</button></div>
+        </Modal>
+      )}
+      {notice && <div className="toast-message" role="status">{notice}</div>}
+    </main>
+  );
+}
+
+function InvoiceTable({ rows, onDownload }: { rows: Invoice[]; onDownload: (invoice: Invoice) => void }) {
+  return (
+    <div className="invoice-table-wrap">
+      <table className="invoice-table">
+        <thead><tr><th>INVOICE</th><th>DATE</th><th>DESCRIPTION</th><th>AMOUNT (INR)</th><th>STATUS</th><th aria-label="Actions" /></tr></thead>
+        <tbody>
+          {rows.map((invoice) => (
+            <tr key={invoice.id}>
+              <td><strong>{invoice.id}</strong></td>
+              <td>{invoice.date}</td>
+              <td>{invoice.description}</td>
+              <td className="invoice-amount">{formatRupees(invoice.amount)}</td>
+              <td><span className={invoice.status === "Paid" ? "paid-pill" : "pending-pill"}>{invoice.status}</span></td>
+              <td><button type="button" className="download-button" aria-label={`Download ${invoice.id}`} onClick={() => onDownload(invoice)}><Icon name="download" size={16} /></button></td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}

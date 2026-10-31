@@ -37,20 +37,20 @@ export default function Home() {
         </Link>
         <nav className="site-nav" aria-label="Main navigation">
           <a href="#how-it-works">How it works</a>
-          <a href="#for-you">For your team</a>
-          <a href="#about">About</a>
+          <a href="#for-you">For you</a>
+          <a href="#about">About us</a>
         </nav>
         <div className="header-actions">
-          <Link className="header-login" href="/dashboard">
+          <Link className="header-login" href="/login">
             Log in
           </Link>
-          <Link className="button button-dark button-small" href="/dashboard">
+          <Link className="button button-dark button-small" href="/plans">
             Get started <Icon name="arrowUpRight" size={15} />
           </Link>
         </div>
       </header>
 
-      <section className="hero" id="about">
+      <section className="hero">
         <div className="hero-kicker">
           <span className="kicker-line" />
           A more human way to do subscriptions
@@ -150,6 +150,32 @@ export default function Home() {
         </div>
       </section>
 
+      <section className="about-section" id="about">
+        <div className="about-art" aria-hidden="true">
+          <span className="about-orbit about-orbit-one" />
+          <span className="about-orbit about-orbit-two" />
+          <span className="about-center-mark"><span /><span /></span>
+          <span className="about-spark about-spark-one">✳</span>
+          <span className="about-spark about-spark-two">✳</span>
+        </div>
+        <div className="about-copy">
+          <p className="eyebrow">A little about us</p>
+          <h2>Subscriptions should feel like a <span>good thing.</span></h2>
+          <p>
+            We think the best recurring businesses are built on trust, not
+            reminders and spreadsheets. Payloop brings plans, payments, and
+            people together so the everyday work feels lighter for everyone.
+          </p>
+          <p>
+            One clear place for your team to run the business — and for your
+            customers to feel right at home.
+          </p>
+          <Link className="text-button" href="/plans">
+            Find your plan <Icon name="arrowRight" size={15} />
+          </Link>
+        </div>
+      </section>
+
       <section className="trust-strip" aria-label="Product promise">
         <span>LESS ADMIN</span><i /> <span>MORE CLARITY</span><i /> <span>BETTER EVERY BILLING DAY</span>
       </section>
@@ -182,8 +208,8 @@ export default function Home() {
         <div className="cta-orb" aria-hidden="true" />
         <p className="eyebrow">Ready when you are</p>
         <h2>Let’s get your business<br />back in its rhythm.</h2>
-        <Link className="button button-dark" href="/dashboard">
-          Visit your customer portal <Icon name="arrowRight" size={17} />
+        <Link className="button button-dark" href="/plans">
+          Find your plan <Icon name="arrowRight" size={17} />
         </Link>
       </section>
 

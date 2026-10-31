@@ -1,16 +1,54 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useState, type FormEvent } from "react";
 import { Icon } from "@/components/icon";
 
 export function AuthForm({ mode }: { mode: "login" | "signup" | "reset" }) {
+  const router = useRouter();
   const [submitted, setSubmitted] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [errorMessage, setErrorMessage] = useState("");
   const isSignup = mode === "signup";
   const isReset = mode === "reset";
 
-  function handleSubmit(event: FormEvent<HTMLFormElement>) {
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    setErrorMessage("");
+
+    if (mode === "login") {
+      const form = event.currentTarget;
+      const data = new FormData(form);
+      const email = String(data.get("email") ?? "").trim();
+      const password = String(data.get("password") ?? "");
+
+      setLoading(true);
+
+      try {
+        const res = await fetch("/api/auth/login", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email, password }),
+        });
+
+        const result = await res.json();
+
+        if (res.ok && result.success && result.redirect) {
+          // Dynamically navigate to destination (e.g. /admin for admin@gmail.com)
+          window.location.href = result.redirect;
+          return;
+        } else {
+          setErrorMessage(result.error || "Invalid email or password. Please try again.");
+          setLoading(false);
+        }
+      } catch (err) {
+        setErrorMessage("Network error during login. Please check connection and try again.");
+        setLoading(false);
+      }
+      return;
+    }
+
     setSubmitted(true);
   }
 
@@ -18,48 +56,188 @@ export function AuthForm({ mode }: { mode: "login" | "signup" | "reset" }) {
     <main className="auth-page">
       <div className="landing-glow" aria-hidden="true" />
       <header className="auth-header">
-        <Link className="brand" href="/" aria-label="Payloop home"><span className="brand-mark"><span /><span /></span>payloop</Link>
-        <Link className="auth-back-link" href="/">Back to home <Icon name="arrowUpRight" size={14} /></Link>
+        <Link className="brand" href="/" aria-label="Payloop home">
+          <span className="brand-mark"><span /><span /></span>payloop
+        </Link>
+        <Link className="auth-back-link" href="/">
+          Back to home <Icon name="arrowUpRight" size={14} />
+        </Link>
       </header>
       <div className="auth-layout">
         <section className="auth-aside">
-          <p className="eyebrow">{isSignup ? "YOUR NEXT GOOD THING" : isReset ? "A LITTLE RESET" : "GOOD TO SEE YOU AGAIN"}</p>
-          <h1>{isSignup ? <>A happier way<br />to <span>keep things going.</span></> : isReset ? <>Back to your<br /><span>happy place.</span></> : <>Welcome back<br />to your <span>happy place.</span></>}</h1>
-          <p>{isSignup ? "One little account. A clearer view of every plan, payment, and invoice." : isReset ? "A fresh start is only a few clicks away. Let’s get you back in." : "Your plans, payments, and the little details in between are right where you left them."}</p>
-          <div className="auth-aside-note"><span className="note-dot" /> Your subscriptions, all in a happier place.</div>
-          <div className="auth-orbit" aria-hidden="true"><span /><span /><i>p</i></div>
+          <p className="eyebrow">
+            {isSignup ? "YOUR NEXT GOOD THING" : isReset ? "A LITTLE RESET" : "GOOD TO SEE YOU AGAIN"}
+          </p>
+          <h1>
+            {isSignup ? (
+              <>A happier way<br />to <span>keep things going.</span></>
+            ) : isReset ? (
+              <>Back to your<br /><span>happy place.</span></>
+            ) : (
+              <>Welcome back<br />to your <span>happy place.</span></>
+            )}
+          </h1>
+          <p>
+            {isSignup
+              ? "One little account. A clearer view of every plan, payment, and invoice."
+              : isReset
+              ? "A fresh start is only a few clicks away. Let’s get you back in."
+              : "Your plans, payments, and the little details in between are right where you left them."}
+          </p>
+          <div className="auth-aside-note">
+            <span className="note-dot" /> Your subscriptions, all in a happier place.
+          </div>
+          <div className="auth-orbit" aria-hidden="true">
+            <span /><span /><i>p</i>
+          </div>
         </section>
+
         <section className="auth-card">
-          <p className="panel-eyebrow">{isSignup ? "LET’S GET YOU SET UP" : isReset ? "PASSWORD RESET" : "YOUR PAYLOOP ACCOUNT"}</p>
+          <p className="panel-eyebrow">
+            {isSignup ? "LET’S GET YOU SET UP" : isReset ? "PASSWORD RESET" : "YOUR PAYLOOP ACCOUNT"}
+          </p>
           <h2>{isSignup ? "Create your account" : isReset ? "Forgot your password?" : "Log in"}</h2>
-          <p className="auth-card-description">{isSignup ? "Start managing your subscriptions in one clear place." : isReset ? "Enter your email and we’ll send a reset link if an account is registered." : "Enter your details to pick up where you left off."}</p>
+          <p className="auth-card-description">
+            {isSignup
+              ? "Start managing your subscriptions in one clear place."
+              : isReset
+              ? "Enter your email and we’ll send a reset link if an account is registered."
+              : "Enter your details to pick up where you left off."}
+          </p>
+
+          {errorMessage && (
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: "8px",
+                padding: "10px 14px",
+                marginBottom: "16px",
+                borderRadius: "8px",
+                background: "#fdf0ee",
+                border: "1px solid #fad3ce",
+                color: "#b7382c",
+                fontSize: "11px",
+              }}
+            >
+              <Icon name="x" size={14} />
+              <span>{errorMessage}</span>
+            </div>
+          )}
+
           {submitted ? (
             <div className="auth-demo-message" role="status">
-              <span className="floating-check"><Icon name="check" size={15} /></span>
-              <strong>{isSignup ? "You’re ready for the next step." : isReset ? "If your email is registered, a reset link is on its way." : "You’re all set for the demo."}</strong>
-              <p>{isSignup ? "Account creation will be available when authentication is connected." : isReset ? "Email delivery is not connected yet, so no message was sent." : "Authentication is not connected yet. You can explore the customer portal."}</p>
-              {isReset ? <Link className="text-button" href="/login">Back to log in <Icon name="arrowRight" size={14} /></Link> : <Link className="button button-dark auth-submit" href="/dashboard">Explore the customer portal <Icon name="arrowRight" size={15} /></Link>}
+              <span className="floating-check">
+                <Icon name="check" size={15} />
+              </span>
+              <strong>
+                {isSignup
+                  ? "You’re ready for the next step."
+                  : isReset
+                  ? "If your email is registered, a reset link is on its way."
+                  : "You’re all set for the demo."}
+              </strong>
+              <p>
+                {isSignup
+                  ? "Account creation will be available when authentication is connected."
+                  : isReset
+                  ? "Email delivery is not connected yet, so no message was sent."
+                  : "Authentication is not connected yet. You can explore the customer portal."}
+              </p>
+              {isReset ? (
+                <Link className="text-button" href="/login">
+                  Back to log in <Icon name="arrowRight" size={14} />
+                </Link>
+              ) : (
+                <Link className="button button-dark auth-submit" href="/dashboard">
+                  Explore the customer portal <Icon name="arrowRight" size={15} />
+                </Link>
+              )}
             </div>
           ) : (
             <form className="auth-form" onSubmit={handleSubmit}>
               {isSignup && (
-                <label>Your name<input name="name" autoComplete="name" placeholder="Aanya Mehta" required /></label>
+                <label>
+                  Your name
+                  <input name="name" autoComplete="name" placeholder="Aanya Mehta" required />
+                </label>
               )}
-              <label>Email address<input name="email" type="email" autoComplete="email" placeholder="you@company.com" required /></label>
-              {!isReset && <label>Password<input name="password" type="password" autoComplete={isSignup ? "new-password" : "current-password"} minLength={isSignup ? 9 : 1} pattern={isSignup ? "^(?=.*[a-z])(?=.*[A-Z])(?=.*[^A-Za-z0-9]).{9,}$" : undefined} title={isSignup ? "At least 9 characters with uppercase, lowercase, and a special character." : undefined} placeholder={isSignup ? "At least 9 characters" : "Your password"} required /></label>}
-              {isSignup && <p className="password-hint">Use at least 9 characters, including uppercase, lowercase, and a special character.</p>}
-              {!isSignup && !isReset && <Link className="forgot-link" href="/reset-password">Forgot your password?</Link>}
-              <button className="button button-dark auth-submit" type="submit">{isSignup ? "Create account" : isReset ? "Send reset link" : "Log in"} <Icon name="arrowRight" size={16} /></button>
+              <label>
+                Email address
+                <input
+                  name="email"
+                  type="email"
+                  autoComplete="email"
+                  placeholder="you@company.com"
+                  required
+                />
+              </label>
+              {!isReset && (
+                <label>
+                  Password
+                  <input
+                    name="password"
+                    type="password"
+                    autoComplete={isSignup ? "new-password" : "current-password"}
+                    minLength={isSignup ? 9 : 1}
+                    pattern={
+                      isSignup
+                        ? "^(?=.*[a-z])(?=.*[A-Z])(?=.*[^A-Za-z0-9]).{9,}$"
+                        : undefined
+                    }
+                    title={
+                      isSignup
+                        ? "At least 9 characters with uppercase, lowercase, and a special character."
+                        : undefined
+                    }
+                    placeholder={isSignup ? "At least 9 characters" : "Your password"}
+                    required
+                  />
+                </label>
+              )}
+              {isSignup && (
+                <p className="password-hint">
+                  Use at least 9 characters, including uppercase, lowercase, and a special character.
+                </p>
+              )}
+              {!isSignup && !isReset && (
+                <Link className="forgot-link" href="/reset-password">
+                  Forgot your password?
+                </Link>
+              )}
+              <button
+                className="button button-dark auth-submit"
+                type="submit"
+                disabled={loading}
+                style={{ opacity: loading ? 0.75 : 1 }}
+              >
+                {loading ? "Authenticating..." : isSignup ? "Create account" : isReset ? "Send reset link" : "Log in"}{" "}
+                <Icon name="arrowRight" size={16} />
+              </button>
             </form>
           )}
+
           <div className="auth-switch">
-            {isSignup ? "Already have an account?" : isReset ? "Remembered your password?" : "New to Payloop?"}{" "}
-            <Link href={isSignup || isReset ? "/login" : "/signup"}>{isSignup || isReset ? "Log in" : "Create an account"}</Link>
+            {isSignup
+              ? "Already have an account?"
+              : isReset
+              ? "Remembered your password?"
+              : "New to Payloop?"}{" "}
+            <Link href={isSignup || isReset ? "/login" : "/signup"}>
+              {isSignup || isReset ? "Log in" : "Create an account"}
+            </Link>
           </div>
-          <p className="auth-demo-footnote">{isReset ? "Password reset email delivery is not connected yet." : "This preview uses demo data. Account access is not connected to a backend yet."}</p>
+          {isReset && (
+            <p className="auth-demo-footnote">
+              Password reset email delivery is not connected yet.
+            </p>
+          )}
         </section>
       </div>
-      <footer className="auth-footer"><Link href="/">payloop</Link><span>Good things, on repeat. © 2026 Payloop</span></footer>
+      <footer className="auth-footer">
+        <Link href="/">payloop</Link>
+        <span>Good things, on repeat. © 2026 Payloop</span>
+      </footer>
     </main>
   );
 }

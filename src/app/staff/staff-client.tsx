@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useState, useMemo, type FormEvent } from "react";
+import { useState, useMemo, useEffect, type FormEvent } from "react";
 import { Icon } from "@/components/icon";
 // @ts-ignore Next.js resolves global CSS imports, while the project TypeScript config may not declare them.
 import "./staff.css";
@@ -492,6 +492,60 @@ export function StaffClient() {
   const [accountSettingsOpen, setAccountSettingsOpen] = useState(false);
   const [changePasswordOpen, setChangePasswordOpen] = useState(false);
   const [passwordMessage, setPasswordMessage] = useState("");
+
+  // Dynamic Staff User Info from PostgreSQL session
+  const [currentStaff, setCurrentStaff] = useState({
+    name: "Siddharth Rao",
+    email: "siddharth.rao@payloop.internal",
+    role: "Operations Specialist",
+    permissions: "Customer records, Subscriptions & Quotes, Invoices & Billing",
+  });
+
+  useEffect(() => {
+    fetch("/api/auth/me")
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (data?.success && data.user) {
+          setCurrentStaff({
+            name: data.user.name || "Siddharth Rao",
+            email: data.user.email || "siddharth.rao@payloop.internal",
+            role: data.user.role || "Operations Specialist",
+            permissions: data.user.permissions || "Customer records, Subscriptions & Quotes",
+          });
+        }
+      })
+      .catch(() => {});
+
+    // Sync customers dynamically from database
+    fetch("/api/admin/customers")
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (data?.success && Array.isArray(data.customers) && data.customers.length > 0) {
+          setCustomers(
+            data.customers.map((c: any) => ({
+              id: c.id,
+              name: c.name,
+              company: c.company,
+              email: c.email,
+              phone: c.phone || "+91 98000 00000",
+              city: c.city || "Bengaluru",
+              currency: "INR (₹)",
+              activeContracts: c.activeContracts || 0,
+              totalSpend: c.totalSpend || 0,
+              status: c.status || "Active",
+              taxId: c.taxId || "29AABC00000A1Z0",
+            }))
+          );
+        }
+      })
+      .catch(() => {});
+  }, []);
+
+  const staffInitials = useMemo(() => {
+    const parts = (currentStaff.name || "SR").trim().split(" ");
+    if (parts.length >= 2) return `${parts[0][0]}${parts[1][0]}`.toUpperCase();
+    return (currentStaff.name || "SR").slice(0, 2).toUpperCase();
+  }, [currentStaff.name]);
 
   // View Mode: Cards View (Default Dashboard Style) vs Table View
   const [viewMode, setViewMode] = useState<"cards" | "table">("cards");
@@ -1028,14 +1082,14 @@ export function StaffClient() {
                 aria-expanded={profileMenuOpen}
                 onClick={() => setProfileMenuOpen((open) => !open)}
               >
-                SR
+                {staffInitials}
               </button>
               {profileMenuOpen && (
                 <div className="staff-profile-menu">
                   <div className="staff-profile-header">
-                    <strong>Siddharth Rao</strong>
-                    <small>siddharth.rao@payloop.internal</small>
-                    <span className="profile-role-tag">Operations Specialist</span>
+                    <strong>{currentStaff.name}</strong>
+                    <small>{currentStaff.email}</small>
+                    <span className="profile-role-tag">{currentStaff.role}</span>
                   </div>
                   <div className="profile-menu-divider" />
                   <button
@@ -2102,7 +2156,15 @@ export function StaffClient() {
             <p className="panel-eyebrow">STAFF PROFILE</p>
             <h2>Account Settings</h2>
             <p className="modal-description">
-              Manage your staff account access.
+              Manage your staff account access and authorizations.
+            </p>
+            <div style={{ background: "rgba(0,0,0,0.03)", padding: "14px", borderRadius: "8px", marginBottom: "16px", fontSize: "13px" }}>
+              <div style={{ marginBottom: "6px" }}><strong>Name:</strong> {currentStaff.name}</div>
+              <div style={{ marginBottom: "6px" }}><strong>Email:</strong> {currentStaff.email}</div>
+              <div style={{ marginBottom: "6px" }}><strong>Role:</strong> <span className="profile-role-tag">{currentStaff.role}</span></div>
+              <div><strong>Powers:</strong> <span style={{ color: "var(--staff-muted)" }}>{currentStaff.permissions}</span></div>
+            </div>
+            <p style={{ display: "none" }}>
             </p>
 
             <div className="settings-options">

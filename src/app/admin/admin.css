@@ -963,3 +963,42 @@
   font-weight: 600;
   color: #25231f;
 }
+
+.admin-danger-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: 0;
+  padding: 4px 8px;
+  border-radius: 6px;
+  background: transparent;
+  color: #b7382c;
+  font-size: 10px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.admin-danger-button:hover {
+  background: #fdf0ee;
+  color: #8c251b;
+}
+
+.rule-controls {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.power-tag {
+  display: inline-block;
+  padding: 2px 7px;
+  border-radius: 4px;
+  background: #f4eee9;
+  color: #6d5b51;
+  font-size: 9px;
+  font-weight: 600;
+  margin-right: 4px;
+  margin-bottom: 2px;
+}
+

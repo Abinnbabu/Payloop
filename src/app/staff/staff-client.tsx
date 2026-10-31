@@ -536,6 +536,19 @@ export function StaffClient() {
     window.setTimeout(() => setNotice(""), 3500);
   }
 
+  function navigateTo(tab: TabId) {
+    setActiveTab(tab);
+    setMenuOpen(false);
+    window.requestAnimationFrame(() => {
+      document.getElementById(tab.toLowerCase())?.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+  }
+
+  function openCustomerDetail(customer: CustomerRecord) {
+    setSelectedCustomer(customer);
+    setCustomerDetailModalOpen(true);
+  }
+
   function submitPassword(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const data = new FormData(event.currentTarget);
@@ -581,6 +594,21 @@ export function StaffClient() {
 
   // Lifecycle Transitions
   function transitionSubscription(id: string, nextStatus: LifecycleStatus, reason?: string) {
+    const subscription = subscriptions.find((item) => item.id === id);
+    if (!subscription) return;
+    const allowedTransitions: Record<LifecycleStatus, LifecycleStatus[]> = {
+      Draft: ["Quotation", "Closed"],
+      Quotation: ["Confirmed", "Closed"],
+      Confirmed: ["Active", "Closed"],
+      Active: ["Paused", "Past Due", "Closed"],
+      Paused: ["Active", "Closed"],
+      "Past Due": ["Active", "Closed"],
+      Closed: [],
+    };
+    if (!allowedTransitions[subscription.status].includes(nextStatus)) {
+      showToast(`Cannot move ${id} from ${subscription.status} to ${nextStatus}.`);
+      return;
+    }
     setSubscriptions((prev) =>
       prev.map((sub) => {
         if (sub.id !== id) return sub;
@@ -649,12 +677,26 @@ export function StaffClient() {
     e.preventDefault();
     if (!selectedInvoiceForPayment) return;
 
+    const amount = Number(payAmount);
+    if (!Number.isFinite(amount) || amount <= 0) {
+      showToast("Enter a valid payment amount.");
+      return;
+    }
+    if (amount !== selectedInvoiceForPayment.total) {
+      showToast(`Record the full outstanding balance of ₹${selectedInvoiceForPayment.total.toLocaleString("en-IN")}.`);
+      return;
+    }
+    if (!payRef.trim()) {
+      showToast("Enter a transaction reference before recording payment.");
+      return;
+    }
+
     const newPayment: PaymentRecord = {
       id: `PAY-${Math.floor(9000 + Math.random() * 1000)}`,
       invoiceId: selectedInvoiceForPayment.id,
       customerName: selectedInvoiceForPayment.customerName,
       method: payMethod,
-      amount: Number(payAmount),
+      amount,
       date: "31 Oct 2026",
       transactionRef: payRef,
       notes: payNotes,
@@ -684,7 +726,48 @@ export function StaffClient() {
 
   // Batch Billing Day Run (Simulation)
   function triggerBillingDay() {
-    showToast("Batch Billing Run: 2 active subscriptions verified. Idempotency lock acquired. 0 duplicate charges.");
+    const billable = activeSubs.filter((sub) => !invoices.some(
+      (invoice) => invoice.subscriptionId === sub.id && (invoice.status === "Draft" || invoice.status === "Confirmed")
+    ));
+    if (billable.length === 0) {
+      showToast("Billing run complete: no new invoices were needed. Duplicate drafts were skipped.");
+      return;
+    }
+    const issuedDate = "31 Oct 2026";
+    const newInvoices = billable.map((sub, index): InvoiceItem => {
+      const taxableSubtotal = Math.round(sub.totalCents / (1 + sub.taxRate));
+      const subtotal = taxableSubtotal + sub.discountAmount;
+      const tax = sub.totalCents - taxableSubtotal;
+      return {
+        id: `INV-2026-${1060 + invoices.length + index}`,
+        subscriptionId: sub.id,
+        customerName: sub.customerName,
+        customerEmail: customers.find((customer) => customer.id === sub.customerId)?.email ?? "",
+        customerTaxId: customers.find((customer) => customer.id === sub.customerId)?.taxId ?? "",
+        description: `${sub.planName} · Scheduled renewal`,
+        subtotal,
+        tax,
+        discount: sub.discountAmount,
+        total: sub.totalCents,
+        status: "Draft",
+        issuedDate,
+        dueDate: sub.expiryDate,
+        idempotencyKey: `demo-billing-${sub.id}-2026-10-31`,
+      };
+    });
+    setInvoices((previous) => [...newInvoices, ...previous]);
+    showToast(`Billing run complete: ${newInvoices.length} draft invoice${newInvoices.length === 1 ? "" : "s"} created; duplicates skipped.`);
+  }
+
+  function useTemplate(template: QuoteTemplate) {
+    setFormPlan(template.planName.includes("Flow") ? "Flow Analytics" : template.planName.includes("Enterprise") ? "Enterprise Suite" : "Studio Workspace");
+    setFormInterval(template.billingInterval);
+    setFormVariant(template.variant.includes("Odoo") ? "Odoo Brand (+₹560)" : "Standard");
+    setFormPrioritySupport(template.addons.some((addon) => addon.includes("Priority")));
+    setFormExtraStorage(template.addons.some((addon) => addon.includes("Storage")));
+    setFormDiscount(template.discountName.startsWith("BULK20") ? "BULK20" : template.discountName.startsWith("FESTIVE10") ? "FESTIVE10" : "None");
+    setCreateSubModalOpen(true);
+    showToast(`${template.title} applied to the quote builder.`);
   }
 
   // Create Subscription Calculation
@@ -789,6 +872,13 @@ export function StaffClient() {
                   <small>Aanya Mehta (Self-service)</small>
                 </div>
               </Link>
+              <Link href="/admin" className="popover-item" onClick={() => setWorkspaceDropdownOpen(false)}>
+                <span className="popover-dot purple-dot" />
+                <div>
+                  <strong>Admin console</strong>
+                  <small>System configuration &amp; governance</small>
+                </div>
+              </Link>
             </div>
           )}
         </div>
@@ -798,7 +888,7 @@ export function StaffClient() {
           <button
             type="button"
             className={`staff-nav-btn${activeTab === "Overview" ? " nav-active" : ""}`}
-            onClick={() => { setActiveTab("Overview"); setMenuOpen(false); }}
+            onClick={() => navigateTo("Overview")}
           >
             <Icon name="grid" size={17} />
             <span>Overview</span>
@@ -807,7 +897,7 @@ export function StaffClient() {
           <button
             type="button"
             className={`staff-nav-btn${activeTab === "Customers" ? " nav-active" : ""}`}
-            onClick={() => { setActiveTab("Customers"); setMenuOpen(false); }}
+            onClick={() => navigateTo("Customers")}
           >
             <Icon name="users" size={17} />
             <span>Customer records</span>
@@ -817,7 +907,7 @@ export function StaffClient() {
           <button
             type="button"
             className={`staff-nav-btn${activeTab === "Subscriptions" ? " nav-active" : ""}`}
-            onClick={() => { setActiveTab("Subscriptions"); setMenuOpen(false); }}
+            onClick={() => navigateTo("Subscriptions")}
           >
             <Icon name="layers" size={17} />
             <span>Subscriptions & Quotes</span>
@@ -827,7 +917,7 @@ export function StaffClient() {
           <button
             type="button"
             className={`staff-nav-btn${activeTab === "Invoices" ? " nav-active" : ""}`}
-            onClick={() => { setActiveTab("Invoices"); setMenuOpen(false); }}
+            onClick={() => navigateTo("Invoices")}
           >
             <Icon name="receipt" size={17} />
             <span>Invoices (Confirm/Send)</span>
@@ -837,7 +927,7 @@ export function StaffClient() {
           <button
             type="button"
             className={`staff-nav-btn${activeTab === "Payments" ? " nav-active" : ""}`}
-            onClick={() => { setActiveTab("Payments"); setMenuOpen(false); }}
+            onClick={() => navigateTo("Payments")}
           >
             <Icon name="wallet" size={17} />
             <span>Record payments</span>
@@ -846,7 +936,7 @@ export function StaffClient() {
           <button
             type="button"
             className={`staff-nav-btn${activeTab === "Overdue" ? " nav-active" : ""}`}
-            onClick={() => { setActiveTab("Overdue"); setMenuOpen(false); }}
+            onClick={() => navigateTo("Overdue")}
           >
             <Icon name="alertCircle" size={17} />
             <span>Track overdue</span>
@@ -858,7 +948,7 @@ export function StaffClient() {
           <button
             type="button"
             className={`staff-nav-btn${activeTab === "Templates" ? " nav-active" : ""}`}
-            onClick={() => { setActiveTab("Templates"); setMenuOpen(false); }}
+            onClick={() => navigateTo("Templates")}
           >
             <Icon name="fileText" size={17} />
             <span>Quote templates</span>
@@ -879,7 +969,7 @@ export function StaffClient() {
           </div>
 
           <div className="sidebar-account">
-            <span className="sidebar-account-avatar">N</span>
+            <span className="sidebar-account-avatar">SR</span>
             <div className="sidebar-account-copy">
               <strong>Siddharth Rao</strong>
               <small>Operations Specialist</small>
@@ -1039,7 +1129,7 @@ export function StaffClient() {
                 <button
                   type="button"
                   className="text-alert"
-                  onClick={() => setActiveTab("Overdue")}
+                  onClick={() => navigateTo("Overdue")}
                 >
                   {overdueInvoices.length} invoice(s) need chasing →
                 </button>
@@ -1060,7 +1150,7 @@ export function StaffClient() {
               <button
                 type="button"
                 className="button button-alert button-small"
-                onClick={() => setActiveTab("Overdue")}
+                onClick={() => navigateTo("Overdue")}
               >
                 Inspect Overdue Queue
               </button>
@@ -1100,7 +1190,7 @@ export function StaffClient() {
                 <button
                   type="button"
                   className="text-button"
-                  onClick={() => setActiveTab("Subscriptions")}
+                  onClick={() => navigateTo("Subscriptions")}
                 >
                   Manage all subscriptions <Icon name="arrowRight" size={13} />
                 </button>
@@ -1227,7 +1317,7 @@ export function StaffClient() {
                         <button
                           type="button"
                           className="action-btn action-alert"
-                          onClick={() => setActiveTab("Overdue")}
+                          onClick={() => navigateTo("Overdue")}
                         >
                           Chase
                         </button>
@@ -1347,7 +1437,7 @@ export function StaffClient() {
                               <button
                                 type="button"
                                 className="action-btn action-alert"
-                                onClick={() => setActiveTab("Overdue")}
+                                onClick={() => navigateTo("Overdue")}
                               >
                                 Chase Dunning
                               </button>
@@ -1372,7 +1462,7 @@ export function StaffClient() {
               <button
                 type="button"
                 className="text-button"
-                onClick={() => setActiveTab("Invoices")}
+                onClick={() => navigateTo("Invoices")}
               >
                 All invoices <Icon name="arrowRight" size={13} />
               </button>
@@ -1468,6 +1558,75 @@ export function StaffClient() {
                 </tbody>
               </table>
             </div>
+          </section>
+
+          <section className="panel" id="customers">
+            <div className="panel-heading">
+              <div>
+                <p className="panel-eyebrow">CUSTOMER DIRECTORY</p>
+                <h2>Customer records <span className="count-bubble">{customers.length}</span></h2>
+              </div>
+              <button type="button" className="text-button" onClick={() => setCreateSubModalOpen(true)}>
+                <Icon name="plus" size={13} /> Create quote
+              </button>
+            </div>
+            <div className="table-responsive">
+              <table className="staff-table">
+                <thead><tr><th>CUSTOMER</th><th>CONTACT</th><th>TAX ID</th><th>CONTRACTS</th><th>LIFETIME SPEND</th><th>STATUS</th><th /></tr></thead>
+                <tbody>{customers.map((customer) => (
+                  <tr key={customer.id}>
+                    <td><strong>{customer.company}</strong><div className="table-caption">{customer.city}</div></td>
+                    <td>{customer.name}<div className="table-caption">{customer.email}</div></td>
+                    <td>{customer.taxId}</td>
+                    <td>{customer.activeContracts}</td>
+                    <td className="amount-col">₹{customer.totalSpend.toLocaleString("en-IN")}</td>
+                    <td><span className={`status-pill status-${customer.status.toLowerCase().replace(/\s+/g, "-")}`}>{customer.status}</span></td>
+                    <td><button type="button" className="text-button" onClick={() => openCustomerDetail(customer)}>View</button></td>
+                  </tr>
+                ))}</tbody>
+              </table>
+            </div>
+          </section>
+
+          <section className="panel" id="payments">
+            <div className="panel-heading">
+              <div><p className="panel-eyebrow">RECONCILIATION LEDGER</p><h2>Recorded payments <span className="count-bubble">{payments.length}</span></h2></div>
+            </div>
+            <div className="table-responsive">
+              <table className="staff-table">
+                <thead><tr><th>PAYMENT</th><th>INVOICE</th><th>CUSTOMER</th><th>METHOD</th><th>REFERENCE</th><th>DATE</th><th>AMOUNT</th></tr></thead>
+                <tbody>{payments.map((payment) => (
+                  <tr key={payment.id}><td><strong>{payment.id}</strong></td><td>{payment.invoiceId}</td><td>{payment.customerName}</td><td>{payment.method}</td><td>{payment.transactionRef}</td><td>{payment.date}</td><td className="amount-col">₹{payment.amount.toLocaleString("en-IN")}</td></tr>
+                ))}</tbody>
+              </table>
+            </div>
+          </section>
+
+          <section className="panel" id="overdue">
+            <div className="panel-heading">
+              <div><p className="panel-eyebrow">COLLECTIONS QUEUE</p><h2>Overdue invoices <span className="count-bubble">{overdueInvoices.length}</span></h2></div>
+            </div>
+            {overdueInvoices.length === 0 ? <p className="empty-panel">No overdue invoices. Collections are up to date.</p> : (
+              <div className="table-responsive">
+                <table className="staff-table">
+                  <thead><tr><th>INVOICE</th><th>CUSTOMER</th><th>DUE DATE</th><th>OVERDUE</th><th>AMOUNT</th><th>ACTIONS</th></tr></thead>
+                  <tbody>{overdueInvoices.map((invoice) => (
+                    <tr key={invoice.id}><td><strong>{invoice.id}</strong></td><td>{invoice.customerName}</td><td>{invoice.dueDate}</td><td>{invoice.daysOverdue ?? 0} days</td><td className="amount-col">₹{invoice.total.toLocaleString("en-IN")}</td><td><div className="row-actions-group"><button type="button" className="action-btn action-muted" onClick={() => showToast(`Payment reminder queued for ${invoice.customerEmail}.`)}>Send reminder</button><button type="button" className="action-btn action-alert" onClick={() => openPaymentModalForInvoice(invoice)}>Record pay</button></div></td></tr>
+                  ))}</tbody>
+                </table>
+              </div>
+            )}
+          </section>
+
+          <section className="panel" id="templates">
+            <div className="panel-heading"><div><p className="panel-eyebrow">STANDARDISED OFFERS</p><h2>Quote templates <span className="count-bubble">{templates.length}</span></h2></div></div>
+            <div className="template-grid">{templates.map((template) => (
+              <article className="template-card" key={template.id}>
+                <span className="template-id">{template.id}</span><h3>{template.title}</h3><p>{template.description}</p>
+                <div className="template-meta"><span>{template.billingInterval}</span><span>Valid {template.validDays} days</span><strong>₹{template.basePrice.toLocaleString("en-IN")}</strong></div>
+                <button type="button" className="button button-staff button-small" onClick={() => useTemplate(template)}>Use template <Icon name="arrowRight" size={13} /></button>
+              </article>
+            ))}</div>
           </section>
         </div>
       </section>
